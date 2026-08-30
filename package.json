@@ -1,0 +1,13 @@
+{
+  "name": "fintwin",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "dev": "pnpm --filter @fintwin/web dev",
+    "build": "pnpm --filter @fintwin/web build",
+    "build:site": "pnpm build && bash scripts/build-sites.sh",
+    "lint": "pnpm --filter @fintwin/web lint",
+    "typecheck": "pnpm --filter @fintwin/web typecheck",
+    "test:web": "pnpm --filter @fintwin/web test"
+  }
+}
