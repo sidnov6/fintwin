@@ -10,7 +10,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .copilot import scripted_answer
+from .copilot import ai_available, live_answer
 from .finance_engine import child_goal_plan, mortgage_refix, retirement_baseline
 from .generator import HOUSEHOLD_ID, generate_fixture
 from .reconciliation import reconcile
@@ -89,7 +89,7 @@ def envelope(data: object, source_ids: list[str] | None = None, warnings: list[s
 
 @app.get("/health")
 def health() -> dict[str, str | bool]:
-    return {"status": "ok", "mode": "synthetic-demo", "demo_mode": True, "regulated_recommendations": False, "version": "1.0.0"}
+    return {"status": "ok", "mode": "synthetic-demo", "demo_mode": True, "ai_available": ai_available(), "ai_model": os.getenv("OPENAI_MODEL", "gpt-5-mini") if ai_available() else "demo_fallback", "regulated_recommendations": False, "version": "1.1.0"}
 
 
 @app.get("/v1/demo/households/{household_id}/overview")
@@ -189,7 +189,12 @@ def copilot_turn(household_id: str, body: CopilotBody, idempotency_key: Annotate
     key = require_key(idempotency_key)
     if cached := state.idempotency.get(key):
         return envelope(cached)
-    result = scripted_answer(body.question, state)
+    try:
+        result = live_answer(body.question, state)
+    except Exception:
+        from .copilot import scripted_answer
+        result = scripted_answer(body.question, state)
+        result["warnings"] = ["Live-KI derzeit nicht erreichbar; geprüfte Demo-Antwort verwendet."]
     state.idempotency[key] = result
     return envelope(result, [sid for claim in result["claims"] for sid in claim["source_ids"]], result["warnings"])
 
