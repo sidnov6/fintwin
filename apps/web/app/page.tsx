@@ -74,6 +74,7 @@ export default function FinTwin() {
     if (storedProfile) try { setProfile({ ...initialProfile, ...JSON.parse(storedProfile) }); } catch { /* ignore invalid local state */ }
   }, []);
   function switchLanguage() { const next = lang === "de" ? "en" : "de"; setLang(next); localStorage.setItem("fintwin-language", next); }
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
   function saveProfile(next: Profile) { setProfile(next); setVersion(v => v + 1); localStorage.setItem("fintwin-profile", JSON.stringify(next)); setNotice(t.saved); }
   function reset() { setProfile(initialProfile); setVersion(17); localStorage.removeItem("fintwin-profile"); setView("start"); setNotice(t.resetDone); }
   const ids: View[] = ["start", "review", "twin", "planning", "assistant"];

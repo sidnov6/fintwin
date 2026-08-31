@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title: "FinTwin — Holistic Financial Review",
   description: "Independent synthetic-data prototype for adviser preparation.",
+  other: { google: "notranslate" },
   openGraph: {
     title: "FinTwin",
     description: "Clarity for your financial conversation.",
@@ -20,7 +21,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="de">
+    <html lang="de" translate="no">
       <body>{children}</body>
     </html>
   );
