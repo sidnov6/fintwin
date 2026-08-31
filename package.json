@@ -8,6 +8,13 @@
     "build:site": "pnpm build && bash scripts/build-sites.sh",
     "lint": "pnpm --filter @fintwin/web lint",
     "typecheck": "pnpm --filter @fintwin/web typecheck",
-    "test:web": "pnpm --filter @fintwin/web test"
+    "test:web": "pnpm --filter @fintwin/web test",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.2"
+  },
+  "devDependencies": {
+    "drizzle-kit": "0.31.10"
   }
 }

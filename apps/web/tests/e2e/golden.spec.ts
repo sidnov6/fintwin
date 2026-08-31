@@ -1,10 +1,22 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-test("deutscher Kernpfad bleibt vollständig bedienbar", async ({ page }) => {
+async function completeOnboarding(page: import("@playwright/test").Page, language: "de" | "en" = "de") {
   await page.goto("/");
+  if (language === "en") await page.getByRole("button", { name: "Switch to English" }).click();
+  await page.getByLabel(language === "de" ? "Ihr Name" : "Your name").fill("Siddharth");
+  await page.getByRole("button", { name: language === "de" ? "Weiter" : "Continue" }).click();
+  await page.getByLabel(language === "de" ? "Aktuelles Nettovermögen" : "Current net worth").fill("487320");
+  await page.getByRole("button", { name: language === "de" ? "Weiter" : "Continue" }).click();
+  await page.getByLabel(language === "de" ? "Ihre Erwartungen" : "Your expectations").fill(language === "de" ? "Ich möchte wissen, wann ich finanziell unabhängig sein kann." : "I want to know when I can become financially independent.");
+  await page.getByRole("button", { name: language === "de" ? "Weiter" : "Continue" }).click();
+  await page.getByRole("button", { name: language === "de" ? "Demo-Bank verbinden" : "Connect demo bank" }).click();
+}
+
+test("deutscher Kernpfad bleibt vollständig bedienbar", async ({ page }) => {
+  await completeOnboarding(page);
   await expect(page.getByText("Guten Morgen,")).toBeVisible();
-  await expect(page.getByText("492.860 €")).toBeVisible();
+  await expect(page.getByText("487.320 €")).toBeVisible();
   const accessibility = await new AxeBuilder({ page }).analyze();
   expect(accessibility.violations.filter(v => ["critical", "serious"].includes(v.impact ?? ""))).toEqual([]);
   await page.getByRole("button", { name: "Finanzcheck", exact: true }).click();
@@ -26,8 +38,7 @@ test("deutscher Kernpfad bleibt vollständig bedienbar", async ({ page }) => {
 });
 
 test("vollständiger englischer Modus bleibt interaktiv", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Switch to English" }).click();
+  await completeOnboarding(page, "en");
   await expect(page.getByText("Good morning,")).toBeVisible();
   await page.getByRole("button", { name: "Financial review", exact: true }).click();
   await expect(page.getByText("Clarity, not a single score.")).toBeVisible();
@@ -36,7 +47,7 @@ test("vollständiger englischer Modus bleibt interaktiv", async ({ page }) => {
 });
 
 test("KI-Assistent zeigt Modellstatus, Quellen und Spracheingabe", async ({ page }) => {
-  await page.goto("/");
+  await completeOnboarding(page);
   await page.getByRole("button", { name: "KI-Assistent", exact: true }).click();
   await expect(page.getByText(/Demo-Modus|Live-KI über Groq verbunden/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Sprachfrage starten" })).toBeVisible();
@@ -44,5 +55,21 @@ test("KI-Assistent zeigt Modellstatus, Quellen und Spracheingabe", async ({ page
   await page.getByRole("button", { name: "Was bedeutet ein Zins von 6 %?" }).click();
   await page.getByRole("button", { name: "Frage senden" }).click();
   await expect(page.getByText(/1.719,43 €/)).toBeVisible();
-  await expect(page.getByText("2 Quellen anzeigen")).toBeVisible();
+  await expect(page.getByText("2 Quellen anzeigen").last()).toBeVisible();
+});
+
+test("Konto-Onboarding bleibt gespeichert und die Million-Antwort klingt menschlich", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.reload();
+  await expect(page.getByText("Guten Morgen,")).toBeVisible();
+  await expect(page.getByText("Siddharth.")).toBeVisible();
+  await page.getByTitle("Mein Konto").click();
+  await expect(page.getByText("Demo-Bank verbunden")).toBeVisible();
+  await page.getByRole("button", { name: "Schließen" }).click();
+  await page.getByRole("button", { name: "KI-Assistent", exact: true }).click();
+  await page.getByRole("button", { name: "Wann erreiche ich 1 Million Euro?" }).click();
+  await page.getByRole("button", { name: "Frage senden" }).click();
+  await expect(page.getByText(/2041/)).toBeVisible();
+  await expect(page.getByText(/71 Jahre/)).toBeVisible();
+  await expect(page.getByText("Model calculations")).toHaveCount(0);
 });
