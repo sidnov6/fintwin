@@ -61,14 +61,16 @@ async function groq(path, env, init) {
   return response;
 }
 
-async function answerQuestion(question, env) {
+async function answerQuestion(question, env, language = "de") {
   if (BLOCKED.some(term => question.toLocaleLowerCase("de").includes(term))) {
     return {
       display_response: "Dabei kann FinTwin keine konkrete Produktempfehlung, Rangfolge oder Transaktion geben. Ich kann stattdessen neutrale Kriterien und Fragen für eine qualifizierte Fachperson strukturieren.",
       claims: [], policy_result: "blocked", mode: "policy_guard", warnings: ["Regulierte Empfehlung begrenzt."],
     };
   }
-  const system = "Du bist der deutschsprachige FinTwin-Assistent. Nutze ausschließlich das Ergebnis des Haushaltsdaten-Werkzeugs. Antworte sachlich in höchstens 120 Wörtern und mit deutschem Zahlenformat. Keine Produkt-, Transaktions-, Steuer-, Rechts- oder Kreditentscheidung. Szenarien sind Modellrechnungen.";
+  const system = language === "en"
+    ? "You are the English-language FinTwin assistant. Use only the household-data tool result. Answer factually in no more than 120 words. Do not make product, transaction, tax, legal or credit decisions. Label scenarios as model calculations."
+    : "Du bist der deutschsprachige FinTwin-Assistent. Nutze ausschließlich das Ergebnis des Haushaltsdaten-Werkzeugs. Antworte sachlich in höchstens 120 Wörtern und mit deutschem Zahlenformat. Keine Produkt-, Transaktions-, Steuer-, Rechts- oder Kreditentscheidung. Szenarien sind Modellrechnungen.";
   const tool = {
     type: "function",
     function: {
@@ -112,7 +114,7 @@ async function transcribe(request, env) {
   const form = new FormData();
   form.set("file", audio, audio.name || "frage.webm");
   form.set("model", "whisper-large-v3-turbo");
-  form.set("language", "de");
+  form.set("language", incoming.get("language") === "en" ? "en" : "de");
   form.set("response_format", "json");
   form.set("temperature", "0");
   const response = await groq("/audio/transcriptions", env, { method: "POST", body: form });
@@ -127,7 +129,7 @@ export default {
       if (url.pathname === "/health") return json({ status: "ok", ai_available: Boolean(env.GROQ_API_KEY), ai_provider: env.GROQ_API_KEY ? "groq" : "demo", ai_model: env.GROQ_CHAT_MODEL || "openai/gpt-oss-120b" });
       if (request.method === "POST" && url.pathname.endsWith("/copilot/turns")) {
         const body = await request.json();
-        const data = await answerQuestion(String(body.question || ""), env);
+        const data = await answerQuestion(String(body.question || ""), env, body.language === "en" ? "en" : "de");
         return json({ ok: true, data, source_ids: data.claims.flatMap(claim => claim.source_ids || []) });
       }
       if (request.method === "POST" && url.pathname.endsWith("/voice/transcribe")) return await transcribe(request, env);
