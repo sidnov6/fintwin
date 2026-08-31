@@ -52,7 +52,7 @@ test("KI-Assistent zeigt Modellstatus, Quellen und Spracheingabe", async ({ page
   await expect(page.getByText(/Demo-Modus|Live-KI über Groq verbunden/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Sprachfrage starten" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Freies Sprachgespräch starten/ })).toBeVisible();
-  await expect(page.getByText(/Weibliche Stimme/).first()).toBeVisible();
+  await expect(page.getByText(/Weibliche Gesprächsstimme/).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Mikrofon auswählen" })).toBeVisible();
   await page.getByPlaceholder("Frage eingeben …").fill("Was bedeutet ein Zins von 6 %?");
   await page.getByRole("button", { name: "Frage senden" }).click();
