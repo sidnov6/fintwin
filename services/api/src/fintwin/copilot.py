@@ -10,7 +10,7 @@ BLOCKED = ("recommend", "empfehlen", "best product", "bestes produkt", "buy", "k
 
 
 def ai_available() -> bool:
-    return bool(os.getenv("OPENAI_API_KEY"))
+    return bool(os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY"))
 
 
 def _blocked_answer() -> dict[str, object]:
@@ -51,10 +51,11 @@ def live_answer(question: str, state: DemoState) -> dict[str, object]:
 
     from openai import OpenAI
     context = _tool_context(state)
-    client = OpenAI()
+    groq_key = os.getenv("GROQ_API_KEY")
+    client = OpenAI(api_key=groq_key or os.getenv("OPENAI_API_KEY"), base_url="https://api.groq.com/openai/v1" if groq_key else None)
     tool = {"type": "function", "name": "get_verified_household_context", "description": "Liefert ausschließlich verifizierte FinTwin-Demodaten mit Quellen-IDs.", "parameters": {"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"], "additionalProperties": False}, "strict": True}
     first = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-5-mini"),
+        model=os.getenv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b") if groq_key else os.getenv("OPENAI_MODEL", "gpt-5-mini"),
         instructions="Du bist der deutschsprachige FinTwin-Assistent. Keine Produkt-, Transaktions-, Steuer-, Rechts- oder Kreditentscheidung. Nutze ausschließlich Werkzeugdaten und kennzeichne Szenarien als Modellrechnung.",
         input=question, tools=[tool], tool_choice={"type": "function", "name": "get_verified_household_context"},
     )
@@ -62,7 +63,7 @@ def live_answer(question: str, state: DemoState) -> dict[str, object]:
     if not calls:
         raise RuntimeError("Erforderlicher Werkzeugaufruf fehlt")
     final = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-5-mini"), previous_response_id=first.id,
+        model=os.getenv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b") if groq_key else os.getenv("OPENAI_MODEL", "gpt-5-mini"), previous_response_id=first.id,
         input=[{"type": "function_call_output", "call_id": call.call_id, "output": json.dumps(context, ensure_ascii=False)} for call in calls],
         tools=[tool], instructions="Antworte ausschließlich aus dem Werkzeugergebnis, auf Deutsch und in höchstens 120 Wörtern. Nutze deutsches Zahlenformat und erfinde keine Werte.",
     )

@@ -89,7 +89,7 @@ def envelope(data: object, source_ids: list[str] | None = None, warnings: list[s
 
 @app.get("/health")
 def health() -> dict[str, str | bool]:
-    return {"status": "ok", "mode": "synthetic-demo", "demo_mode": True, "ai_available": ai_available(), "ai_model": os.getenv("OPENAI_MODEL", "gpt-5-mini") if ai_available() else "demo_fallback", "regulated_recommendations": False, "version": "1.1.0"}
+    return {"status": "ok", "mode": "synthetic-demo", "demo_mode": True, "ai_available": ai_available(), "ai_model": os.getenv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b") if os.getenv("GROQ_API_KEY") else os.getenv("OPENAI_MODEL", "gpt-5-mini") if ai_available() else "demo_fallback", "regulated_recommendations": False, "version": "1.2.0"}
 
 
 @app.get("/v1/demo/households/{household_id}/overview")

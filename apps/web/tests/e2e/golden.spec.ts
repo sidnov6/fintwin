@@ -22,7 +22,7 @@ test("deutscher Kernpfad bleibt vollständig bedienbar", async ({ page }) => {
 test("KI-Assistent zeigt Modellstatus, Quellen und Spracheingabe", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "KI-Assistent", exact: true }).click();
-  await expect(page.getByText(/Demo-Modus|Live-KI verbunden/)).toBeVisible();
+  await expect(page.getByText(/Demo-Modus|Live-KI über Groq verbunden/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Sprachfrage starten" })).toBeVisible();
   await page.getByRole("button", { name: "Was bedeutet ein Zins von 6 %?" }).click();
   await page.getByRole("button", { name: "Frage senden" }).click();
