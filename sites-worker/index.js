@@ -64,8 +64,8 @@ async function groq(path, env, init) {
 async function answerQuestion(question, env, language = "de") {
   if (BLOCKED.some(term => question.toLocaleLowerCase("de").includes(term))) {
     return {
-      display_response: "Dabei kann FinTwin keine konkrete Produktempfehlung, Rangfolge oder Transaktion geben. Ich kann stattdessen neutrale Kriterien und Fragen für eine qualifizierte Fachperson strukturieren.",
-      claims: [], policy_result: "blocked", mode: "policy_guard", warnings: ["Regulierte Empfehlung begrenzt."],
+      display_response: language === "en" ? "FinTwin cannot provide a specific product recommendation, ranking or transaction. I can instead structure neutral criteria and questions for a qualified professional." : "Dabei kann FinTwin keine konkrete Produktempfehlung, Rangfolge oder Transaktion geben. Ich kann stattdessen neutrale Kriterien und Fragen für eine qualifizierte Fachperson strukturieren.",
+      claims: [], policy_result: "blocked", mode: "policy_guard", warnings: [language === "en" ? "Regulated recommendation restricted." : "Regulierte Empfehlung begrenzt."],
     };
   }
   const system = language === "en"
@@ -96,12 +96,12 @@ async function answerQuestion(question, env, language = "de") {
     body: JSON.stringify({ model: env.GROQ_CHAT_MODEL || "openai/gpt-oss-120b", messages, temperature: 0.2 }),
   });
   const final = await finalResponse.json();
-  const text = final.choices?.[0]?.message?.content?.trim();
+  const text = final.choices?.[0]?.message?.content?.trim().replace(/\*\*/g, "");
   if (!text) throw new Error("Leere Modellantwort");
   return {
     display_response: text,
     claims: [{ text, source_ids: sourceIds(), confidence: "model_with_verified_context" }],
-    policy_result: "allowed", mode: "groq_live", warnings: ["KI-generierte Einordnung; wichtige Entscheidungen menschlich prüfen."],
+    policy_result: "allowed", mode: "groq_live", warnings: [language === "en" ? "AI-generated interpretation; have important decisions reviewed by a human." : "KI-generierte Einordnung; wichtige Entscheidungen menschlich prüfen."],
     tool_calls: [{ name: "get_verified_household_context", trace_id: first.id }],
   };
 }
