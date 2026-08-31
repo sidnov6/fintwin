@@ -11,3 +11,13 @@ export const userProfiles = sqliteTable("user_profiles", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, table => [index("idx_user_profiles_updated_at").on(table.updatedAt)]);
+
+export const conversationTurns = sqliteTable("conversation_turns", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  role: text("role", { enum: ["user", "assistant"] }).notNull(),
+  content: text("content").notNull(),
+  sourceIds: text("source_ids").notNull().default("[]"),
+  mode: text("mode").notNull().default("text"),
+  createdAt: text("created_at").notNull(),
+}, table => [index("idx_conversation_turns_user_created").on(table.userId, table.createdAt)]);

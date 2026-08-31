@@ -51,11 +51,25 @@ test("KI-Assistent zeigt Modellstatus, Quellen und Spracheingabe", async ({ page
   await page.getByRole("button", { name: "KI-Assistent", exact: true }).click();
   await expect(page.getByText(/Demo-Modus|Live-KI über Groq verbunden/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Sprachfrage starten" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Freies Sprachgespräch starten/ })).toBeVisible();
+  await expect(page.getByText(/Weibliche Stimme/).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Mikrofon auswählen" })).toBeVisible();
-  await page.getByRole("button", { name: "Was bedeutet ein Zins von 6 %?" }).click();
+  await page.getByPlaceholder("Frage eingeben …").fill("Was bedeutet ein Zins von 6 %?");
   await page.getByRole("button", { name: "Frage senden" }).click();
   await expect(page.getByText(/1.719,43 €/)).toBeVisible();
   await expect(page.getByText("2 Quellen anzeigen").last()).toBeVisible();
+});
+
+test("Portfolio zeigt Depot, vollständige Bilanz und fiktive Historie", async ({ page }) => {
+  await completeOnboarding(page, "en");
+  await page.getByRole("button", { name: "Portfolio", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /Everything you own/ })).toBeVisible();
+  await expect(page.getByText("FinTwin Demo Brokerage")).toBeVisible();
+  await expect(page.getByText("Vanguard FTSE All-World ETF")).toBeVisible();
+  await expect(page.getByText("Munich family home")).toBeVisible();
+  await expect(page.getByText("Home mortgage")).toBeVisible();
+  await expect(page.getByText("Fictional acquisition history")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh prices" })).toBeEnabled();
 });
 
 test("Konto-Onboarding bleibt gespeichert und die Million-Antwort klingt menschlich", async ({ page }) => {
@@ -67,7 +81,7 @@ test("Konto-Onboarding bleibt gespeichert und die Million-Antwort klingt menschl
   await expect(page.getByText("Demo-Bank verbunden")).toBeVisible();
   await page.getByRole("button", { name: "Schließen" }).click();
   await page.getByRole("button", { name: "KI-Assistent", exact: true }).click();
-  await page.getByRole("button", { name: "Wann erreiche ich 1 Million Euro?" }).click();
+  await page.getByPlaceholder("Frage eingeben …").fill("Wann erreiche ich 1 Million Euro?");
   await page.getByRole("button", { name: "Frage senden" }).click();
   await expect(page.getByText(/2041/)).toBeVisible();
   await expect(page.getByText(/71 Jahre/)).toBeVisible();
