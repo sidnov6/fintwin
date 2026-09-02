@@ -15,6 +15,13 @@
       "when": 1788209145161,
       "tag": "0001_classy_lilith",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788385016229,
+      "tag": "0002_smooth_wraith",
+      "breakpoints": true
     }
   ]
 }

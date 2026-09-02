@@ -7,14 +7,22 @@
     "build": "pnpm --filter @fintwin/web build",
     "build:site": "pnpm build && bash scripts/build-sites.sh",
     "lint": "pnpm --filter @fintwin/web lint",
-    "typecheck": "pnpm --filter @fintwin/web typecheck",
+    "typecheck": "pnpm --filter @fintwin/web typecheck && pnpm typecheck:worker",
     "test:web": "pnpm --filter @fintwin/web test",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "dev:api": "node scripts/dev-api.mjs",
+    "dev:all": "node scripts/dev-api.mjs & pnpm --filter @fintwin/web dev",
+    "bundle:worker": "node scripts/bundle-worker.mjs",
+    "typecheck:worker": "tsc -p sites-worker",
+    "test:worker": "vitest run --root sites-worker"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2"
   },
   "devDependencies": {
-    "drizzle-kit": "0.31.10"
+    "drizzle-kit": "0.31.10",
+    "esbuild": "0.28.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
   }
 }

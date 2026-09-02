@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "types": [],
+    "baseUrl": "..",
+    "paths": { "@fintwin/engine": ["packages/engine/src/index.ts"], "@fintwin/contracts": ["packages/contracts/src/index.ts"] }
+  },
+  "include": ["src/**/*.ts", "../packages/engine/src/**/*.ts", "../packages/contracts/src/**/*.ts"]
+}

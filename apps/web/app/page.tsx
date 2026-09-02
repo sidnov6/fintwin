@@ -1,319 +1,107 @@
 "use client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LayoutGrid, MessageSquare, Settings2, Sparkles, SlidersHorizontal } from "lucide-react";
+import type { AppState, Lang, Message } from "@fintwin/contracts";
+import { api, ApiError } from "./lib/api";
+import { initials } from "./lib/format";
+import { copy } from "./lib/i18n";
+import { Chat } from "./components/Chat";
+import { PictureRail, PictureView } from "./components/Picture";
+import { PlanView } from "./components/Plan";
+import { SettingsSheet, type Theme } from "./components/Settings";
 
-import {
-  ArrowRight, AudioLines, BarChart3, Bot, Briefcase, Building2, Check, ChevronRight,
-  CircleAlert, CircleCheck, Clock, Database, Edit3, FileText, Headphones, Home,
-  Landmark, Link2, LockKeyhole, LogOut, Menu, Mic, MicOff, PieChart, PiggyBank,
-  Play, RefreshCw, RotateCcw, Save, Send, Settings2, ShieldCheck, Sparkles,
-  TrendingUp, UserRound, Volume2, WalletCards, X,
-} from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+type View = "chat" | "picture" | "plan";
 
-type View = "start" | "review" | "twin" | "portfolio" | "planning" | "assistant";
-type Lang = "de" | "en";
-type Message = { role: "user" | "assistant"; text: string; sources?: string[]; mode?: string; createdAt?: string };
-type Profile = { netWorth: number; income: number; assets: number; property: number; mortgage: number; retirementAge: number; runway: number };
-type AccountProfile = { name: string; email?: string; netWorth: number; expectations: string; bankConnected: boolean; language: Lang };
-type ReviewKey = "protection" | "retirement" | "wealth" | "home" | "liquidity" | "family";
-type PortfolioHolding = { symbol: string; name: string; quantity: number; currency: string; price: number; priceEur: number; valueEur: number; costBasisEur: number; gainEur: number; gainPct: number; oneYearChangePct: number; weightPct: number; sector: string; quoteSource: string };
-type BalanceItem = { id: string; type: string; name: string; valueEur: number; institution?: string; fixedUntil?: string; ratePct?: number };
-type PortfolioData = {
-  connection: { name: string; status: string; accountEnding: string; mode: string };
-  asOf: string; pricing: { status: string; provider: string; containsFallback: boolean };
-  summary: { marketValueEur: number; costBasisEur: number; gainEur: number; gainPct: number; oneYearChangePct: number; topThreeWeightPct: number };
-  holdings: PortfolioHolding[]; sectorAllocation: Array<{ name: string; valueEur: number; weightPct: number }>;
-  history: Array<{ month: string; valueEur: number }>;
-  activity: Array<{ date: string; symbol: string; action: string; quantity: number; price: number }>;
-  balanceSheet: { assets: BalanceItem[]; liabilities: BalanceItem[]; totalAssetsEur: number; totalLiabilitiesEur: number; modeledNetWorthEur: number; declaredNetWorthEur: number; reconciliationDifferenceEur: number };
-};
-
-const api = process.env.NEXT_PUBLIC_API_URL ?? "";
-const initialProfile: Profile = { netWorth: 487320, income: 7240, assets: 307320, property: 420000, mortgage: 240000, retirementAge: 63, runway: 7.8 };
-
-const copy = {
-  de: {
-    nav: ["Start", "Finanzcheck", "Finanz-Twin", "Portfolio", "Planung", "KI-Assistent"], demo: "Demo-Daten",
-    trust: "Unabhängiger Prototyp mit fiktiven Daten", trust2: "Keine Produktberatung · Jede Zahl ist nachvollziehbar",
-    greeting: "Guten Morgen", intro: "Ihre Finanzen sind solide erfasst. Drei Punkte sollten Sie jetzt genauer ansehen.",
-    openReview: "Finanzcheck öffnen", ask: "FinTwin fragen", complete: "Daten vollständig", reconciled: "7.666 Buchungen abgeglichen", current: "Stand aktuell",
-    netWorth: "Nettovermögen", cashflow: "Freier Cashflow", reserve: "Notfallreserve", quality: "Datenqualität", month: "Monat", target: "Ziel: 6 Monate", matched: "Vollständig abgeglichen",
-    important: "Was jetzt wichtig ist", next: "Drei Themen für Ihren nächsten Schritt", all: "Alle Bereiche ansehen",
-    mortgage: "Anschlussfinanzierung", mortgageText: "Zinsbindung endet in 14 Monaten", costs: "Laufende Kosten", costsText: "134 € pro Monat mehr als im Vorjahr", protection: "Einkommensschutz", protectionText: "Angaben zu Annas Absicherung fehlen",
-    cashTitle: "So verteilt sich Ihr Monat", income: "Einnahmen", expenses: "Ausgaben", left: "Übrig", rise: "Regelmäßige Ausgaben sind zuletzt spürbar gestiegen.",
-    askSimple: "Fragen Sie einfach.", askBlurb: "Per Text oder Sprache. Antworten werden aus geprüften Haushaltsdaten erzeugt und mit Quellen belegt.", startVoice: "Sprachgespräch starten", tapSpeak: "Zum Sprechen antippen", noProducts: "Keine Produktvorschläge oder Abschlüsse",
-    reviewOver: "Ihr Finanzcheck", reviewTitle: "Klarheit statt Gesamtnote.", reviewText: "Jeder Lebensbereich zeigt, was belegt ist, was fehlt und welche Angaben Sie direkt ergänzen können.", strength: "1 Stärke", checks: "3 Prüfthemen", gaps: "2 Datenlücken",
-    ready: "Bereit für das Beratungsgespräch?", readyText: "Ergänzen Sie fehlende Angaben und bereiten Sie Ihre Fragen vor.", prepare: "Fragen vorbereiten",
-    twinOver: "Ihr Finanz-Twin", twinText: "Herkunft, Aktualität und Sicherheit bleiben an jedem wichtigen Fakt sichtbar.", edit: "Bearbeiten", fact: "Fakt", value: "Aktueller Wert", source: "Quelle", confidence: "Sicherheit", lastSync: "Zuletzt abgeglichen: 30.08.2026",
-    noSilent: "Keine stille Änderung", noSilentText: "Jede Korrektur erzeugt eine neue, unveränderliche Version.", sourcesVisible: "Quellen bleiben sichtbar", sourcesVisibleText: "Berechnungen und KI-Antworten verweisen auf dieselben Belege.", reproducible: "Jeder Stand reproduzierbar", reproducibleText: "Annahmen, Regeln und Zeitpunkte werden mitgespeichert.",
-    planningOver: "Szenario-Planung", planningTitle: "Was wäre, wenn? Offen gerechnet.", planningText: "Ändern Sie Annahmen und sehen Sie die Auswirkung sofort – ohne Prognose oder Produktempfehlung.", financing: "Anschlussfinanzierung", pension: "Ruhestand", remaining: "Restschuld", term: "Restlaufzeit", years: "Jahre", rateQuestion: "Wie verändert der Zins Ihre Rate?", modelOnly: "Modellrechnung, kein Kreditangebot", perMonth: "pro Monat", pensionAge: "Rentenalter", monthlySaving: "Monatliche Sparrate", goalCapital: "des Zielkapitals",
-    assistantOver: "FinTwin KI-Assistent", assistantTitle: "Fragen Sie Ihre Finanzen.", assistantAccent: "In Ihrer Sprache. Mit Quellen.", assistantBlurb: "Text oder Sprache – Antworten basieren auf geprüften Daten Ihres Finanz-Twins.", live: "Live-KI über Groq verbunden", offline: "Demo-Modus · KI nicht erreichbar", protected: "Geschützter Planungsraum", question: "Frage eingeben …", send: "Frage senden", startRecording: "Sprachfrage starten", stopRecording: "Aufnahme beenden", recording: "Aufnahme läuft – zum Beenden tippen …", voiceHint: "Mikrofon antippen, sprechen, erneut antippen. Die Antwort wird vorgelesen.", micSelect: "Mikrofon auswählen", micTitle: "Audioeingang", micHelp: "Wählen Sie das MacBook-Mikrofon, damit Chrome nicht auf das iPhone wechselt.", micPermission: "Mikrofonzugriff anfragen", noMic: "Keine Mikrofone gefunden", close: "Schließen",
-    save: "Speichern", cancel: "Abbrechen", saved: "Gespeichert", details: "Details bearbeiten", notes: "Notizen", status: "Status", confirmed: "Bestätigt", review: "Prüfen", missing: "Fehlt", reset: "Demo zurücksetzen", resetDone: "Demo wurde zurückgesetzt.", local: "Auf diesem Gerät gespeichert", account: "Mein Konto", editAccount: "Antworten bearbeiten", signOut: "Abmelden", connected: "Demo-Bank verbunden", signedIn: "Sicher angemeldet",
-  },
-  en: {
-    nav: ["Home", "Financial review", "Financial twin", "Portfolio", "Planning", "AI assistant"], demo: "Demo data",
-    trust: "Independent prototype with fictional data", trust2: "No product advice · Every number is traceable",
-    greeting: "Good morning", intro: "Your finances are captured consistently. Three areas deserve a closer look now.",
-    openReview: "Open financial review", ask: "Ask FinTwin", complete: "Data complete", reconciled: "7,666 transactions reconciled", current: "Up to date",
-    netWorth: "Net worth", cashflow: "Free cashflow", reserve: "Emergency reserve", quality: "Data quality", month: "month", target: "Target: 6 months", matched: "Fully reconciled",
-    important: "What matters now", next: "Three topics for your next step", all: "View all areas",
-    mortgage: "Mortgage refix", mortgageText: "Fixed-rate period ends in 14 months", costs: "Recurring costs", costsText: "€134 per month above last year", protection: "Income protection", protectionText: "Anna’s coverage details are missing",
-    cashTitle: "How your month is distributed", income: "Income", expenses: "Expenses", left: "Remaining", rise: "Recurring expenses have risen noticeably.",
-    askSimple: "Just ask.", askBlurb: "By text or voice. Answers are generated from verified household data and include sources.", startVoice: "Start voice conversation", tapSpeak: "Tap to speak", noProducts: "No product suggestions or transactions",
-    reviewOver: "Your financial review", reviewTitle: "Clarity, not a single score.", reviewText: "Each life area shows what is verified, what is missing, and which details you can add directly.", strength: "1 strength", checks: "3 review topics", gaps: "2 data gaps",
-    ready: "Ready for an adviser conversation?", readyText: "Complete missing information and prepare your questions.", prepare: "Prepare questions",
-    twinOver: "Your financial twin", twinText: "Origin, freshness and confidence remain visible for every material fact.", edit: "Edit", fact: "Fact", value: "Current value", source: "Source", confidence: "Confidence", lastSync: "Last reconciled: 30 Aug 2026",
-    noSilent: "No silent changes", noSilentText: "Every correction creates a new immutable version.", sourcesVisible: "Sources stay visible", sourcesVisibleText: "Calculations and AI answers reference the same evidence.", reproducible: "Every state reproducible", reproducibleText: "Assumptions, rules and timestamps are stored.",
-    planningOver: "Scenario planning", planningTitle: "What if? Calculated transparently.", planningText: "Change assumptions and see the impact immediately—without turning it into a forecast or recommendation.", financing: "Mortgage refix", pension: "Retirement", remaining: "Remaining principal", term: "Remaining term", years: "years", rateQuestion: "How does the rate change your payment?", modelOnly: "Model calculation, not a loan offer", perMonth: "per month", pensionAge: "Retirement age", monthlySaving: "Monthly contribution", goalCapital: "of target capital",
-    assistantOver: "FinTwin AI assistant", assistantTitle: "Ask your finances.", assistantAccent: "In your language. With sources.", assistantBlurb: "Text or voice—answers are grounded in verified data from your financial twin.", live: "Live AI connected through Groq", offline: "Demo mode · AI unavailable", protected: "Protected planning space", question: "Type a question …", send: "Send question", startRecording: "Start voice question", stopRecording: "Stop recording", recording: "Recording—tap again to stop …", voiceHint: "Tap the microphone, speak, then tap again. The answer will be read aloud.", micSelect: "Choose microphone", micTitle: "Audio input", micHelp: "Choose the MacBook microphone so Chrome does not switch to the iPhone.", micPermission: "Request microphone access", noMic: "No microphones found", close: "Close",
-    save: "Save", cancel: "Cancel", saved: "Saved", details: "Edit details", notes: "Notes", status: "Status", confirmed: "Confirmed", review: "Review", missing: "Missing", reset: "Reset demo", resetDone: "Demo was reset.", local: "Saved on this device", account: "My account", editAccount: "Edit answers", signOut: "Sign out", connected: "Demo bank connected", signedIn: "Securely signed in",
-  },
-} as const;
-
-const onboardingCopy = {
-  de: {
-    eyebrow: "Willkommen bei FinTwin", title: "Lernen wir uns kurz kennen.", intro: "Keine Formularstrecke. Drei kurze Fragen, dann ist Ihr persönlicher Finanz-Twin bereit.",
-    nameTitle: "Wie dürfen wir Sie nennen?", nameText: "So spricht FinTwin Sie im Gespräch an.", nameLabel: "Ihr Name", namePlaceholder: "z. B. Siddharth",
-    worthTitle: "Wie hoch ist Ihr Nettovermögen?", worthText: "Eine gute Schätzung genügt. Gemeint sind Vermögen minus Schulden.", worthLabel: "Aktuelles Nettovermögen", worthHint: "Sie können diesen Wert später jederzeit ändern.",
-    goalsTitle: "Was erwarten Sie von FinTwin?", goalsText: "Erzählen Sie es so, wie Sie es auch einem Menschen sagen würden.", goalsLabel: "Ihre Erwartungen", goalsPlaceholder: "Ich möchte verstehen, wann ich finanziell unabhängig sein kann und wo ich heute unnötig Geld verliere.",
-    bankTitle: "Zum Schluss: Demo-Bank verbinden", bankText: "Für diesen Prototyp verbinden wir keine echte Bank. Jeder Account erhält denselben geprüften, synthetischen Transaktionsbestand.", bankName: "FinTwin Demo Bank", bankMeta: "7.666 fiktive Buchungen · 60 Monate · keine echten Kontodaten", bankPrivacy: "Es werden keine Bank-Zugangsdaten abgefragt.",
-    continue: "Weiter", back: "Zurück", connect: "Demo-Bank verbinden", connecting: "Finanz-Twin wird vorbereitet …", finish: "FinTwin öffnen", step: "Schritt", of: "von", error: "Das Konto konnte gerade nicht gespeichert werden. Bitte versuchen Sie es erneut.", loading: "Ihr Finanz-Twin wird geladen …",
-  },
-  en: {
-    eyebrow: "Welcome to FinTwin", title: "Let’s get to know you.", intro: "No long setup form. Three short questions, then your personal financial twin is ready.",
-    nameTitle: "What should we call you?", nameText: "This is how FinTwin will address you in conversation.", nameLabel: "Your name", namePlaceholder: "e.g. Siddharth",
-    worthTitle: "What is your current net worth?", worthText: "A good estimate is enough. Think assets minus debts.", worthLabel: "Current net worth", worthHint: "You can change this at any time later.",
-    goalsTitle: "What do you expect from FinTwin?", goalsText: "Say it the way you would say it to another person.", goalsLabel: "Your expectations", goalsPlaceholder: "I want to understand when I can become financially independent and where I am losing money today.",
-    bankTitle: "One last step: connect the demo bank", bankText: "This prototype never connects to a real bank. Every account receives the same verified synthetic transaction history.", bankName: "FinTwin Demo Bank", bankMeta: "7,666 fictional transactions · 60 months · no real account data", bankPrivacy: "We never ask for bank login details.",
-    continue: "Continue", back: "Back", connect: "Connect demo bank", connecting: "Preparing your financial twin …", finish: "Open FinTwin", step: "Step", of: "of", error: "We could not save your account just now. Please try again.", loading: "Loading your financial twin …",
-  },
-} as const;
-
-function money(value: number, lang: Lang, decimals = 0) {
-  return new Intl.NumberFormat(lang === "de" ? "de-DE" : "en-GB", { style: "currency", currency: "EUR", minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(value);
-}
-
-export default function FinTwin() {
-  const [view, setView] = useState<View>("start");
+export default function FinTwinApp() {
+  const [state, setState] = useState<AppState | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [lang, setLang] = useState<Lang>("de");
-  const [menu, setMenu] = useState(false);
-  const [version, setVersion] = useState(17);
-  const [notice, setNotice] = useState("");
-  const [profile, setProfile] = useState<Profile>(initialProfile);
-  const [account, setAccount] = useState<AccountProfile | null>(null);
-  const [accountStatus, setAccountStatus] = useState<"loading" | "onboarding" | "ready">("loading");
-  const [accountOpen, setAccountOpen] = useState(false);
-  const t = copy[lang];
-  useEffect(() => {
-    const storedLang = localStorage.getItem("fintwin-language") as Lang | null;
-    const storedProfile = localStorage.getItem("fintwin-profile");
-    if (storedLang === "de" || storedLang === "en") setLang(storedLang);
-    if (storedProfile) try { setProfile({ ...initialProfile, ...JSON.parse(storedProfile) }); } catch { /* ignore invalid local state */ }
-    async function loadAccount() {
-      try {
-        const response = await fetch(`${api}/v1/account`, { cache: "no-store" });
-        if (!response.ok) throw new Error("account unavailable");
-        const body = await response.json();
-        const saved = body.data?.profile as AccountProfile | null;
-        if (saved) {
-          setAccount(saved); setLang(saved.language); setProfile(current => ({ ...current, netWorth: saved.netWorth })); setAccountStatus("ready"); return;
-        }
-        setAccountStatus("onboarding");
-      } catch {
-        const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-        const local = isLocal ? localStorage.getItem("fintwin-local-account") : null;
-        if (local) try { const saved = JSON.parse(local) as AccountProfile; setAccount(saved); setLang(saved.language); setProfile(current => ({ ...current, netWorth: saved.netWorth })); setAccountStatus("ready"); return; } catch { /* continue to onboarding */ }
-        setAccountStatus("onboarding");
-      }
-    }
-    void loadAccount();
-  }, []);
-  function switchLanguage() { const next: Lang = lang === "de" ? "en" : "de"; setLang(next); localStorage.setItem("fintwin-language", next); if (account) { const updated: AccountProfile = { ...account, language: next }; setAccount(updated); void fetch(`${api}/v1/account`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ language: next }) }); } }
-  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
-  async function finishOnboarding(next: AccountProfile) {
+  const [view, setView] = useState<View>("chat");
+  const [theme, setTheme] = useState<Theme>("auto");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [toast, setToast] = useState("");
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [loadError, setLoadError] = useState<"unauthorized" | string>("");
+  const sendRef = useRef<(text: string) => void>(() => {});
+  const langRef = useRef<Lang | null>(null);
+  const t = copy(lang);
+
+  const load = useCallback(async () => {
+    setStatus("loading");
     try {
-      const response = await fetch(`${api}/v1/account`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
-      if (!response.ok) throw new Error("save failed");
-      const body = await response.json();
-      const saved = (body.data?.profile ?? next) as AccountProfile;
-      setAccount(saved); setProfile(current => ({ ...current, netWorth: saved.netWorth })); setAccountStatus("ready"); setAccountOpen(false); setNotice(t.saved);
-    } catch {
-      const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-      if (!isLocal) throw new Error("save failed");
-      localStorage.setItem("fintwin-local-account", JSON.stringify(next)); setAccount(next); setProfile(current => ({ ...current, netWorth: next.netWorth })); setAccountStatus("ready"); setAccountOpen(false);
+      const next = await api.state();
+      const language: Lang = next.profile?.language ?? langRef.current ?? (typeof navigator !== "undefined" && navigator.language.startsWith("en") ? "en" : "de");
+      langRef.current = language;
+      setLang(language);
+      setState(next);
+      const history = await api.messages(language);
+      setMessages(history.messages);
+      setStatus("ready");
+    } catch (error) {
+      setLoadError(error instanceof ApiError && error.status === 401 ? "unauthorized" : error instanceof Error ? error.message : "Failed to load.");
+      setStatus("error");
     }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
+  useEffect(() => { const stored = localStorage.getItem("fintwin-theme") as Theme | null; if (stored === "light" || stored === "dark" || stored === "auto") setTheme(stored); }, []);
+  useEffect(() => {
+    if (theme === "auto") { delete document.documentElement.dataset.theme; localStorage.removeItem("fintwin-theme"); }
+    else { document.documentElement.dataset.theme = theme; localStorage.setItem("fintwin-theme", theme); }
+  }, [theme]);
+  useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 2400); return () => clearTimeout(timer); }, [toast]);
+
+  const applyState = useCallback((next: AppState) => setState(current => ({ ...next, portfolio: next.portfolio ?? current?.portfolio ?? null })), []);
+  const registerSend = useCallback((send: (text: string) => void) => { sendRef.current = send; }, []);
+  const ask = useCallback((text: string) => { setView("chat"); setTimeout(() => sendRef.current(text), 40); }, []);
+  const addMessage = useCallback((message: Message) => setMessages(current => [...current, message]), []);
+
+  async function switchLanguage(next: Lang) {
+    if (next === lang) return;
+    langRef.current = next;
+    setLang(next);
+    if (state?.profile) applyState(await api.patchProfile({ language: next }));
+    const history = await api.messages(next);
+    setMessages(history.messages);
   }
-  function saveProfile(next: Profile) {
-    setProfile(next); setVersion(v => v + 1); localStorage.setItem("fintwin-profile", JSON.stringify(next)); setNotice(t.saved);
-    if (account && next.netWorth !== account.netWorth) {
-      const updated = { ...account, netWorth: next.netWorth, language: lang }; setAccount(updated);
-      void fetch(`${api}/v1/account`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ netWorth: next.netWorth, language: lang }) });
-    }
+
+  async function reset() {
+    await api.reset();
+    setMessages([]);
+    await load();
+    setToast(t.settings.resetDone);
   }
-  if (accountStatus === "loading") return <AccountLoading lang={lang} onLanguage={switchLanguage} />;
-  if (accountStatus === "onboarding") return <Onboarding lang={lang} initial={account} onLanguage={switchLanguage} onCancel={account ? () => setAccountStatus("ready") : undefined} onComplete={finishOnboarding} />;
-  const ids: View[] = ["start", "review", "twin", "portfolio", "planning", "assistant"];
-  const icons = [Home, BarChart3, Database, Briefcase, Landmark, Sparkles];
-  const initials = (account?.name || "FT").split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
-  return <main>
-    <header className="nav-shell">
-      <button className="brand" onClick={() => setView("start")} aria-label={t.nav[0]}><span className="brand-symbol"><i /><i /><i /></span><span>FinTwin<small>{lang === "de" ? "Ihr Finanzbild" : "Your financial picture"}</small></span></button>
-      <nav className={menu ? "nav-open" : ""} aria-label={lang === "de" ? "Hauptnavigation" : "Main navigation"}>{ids.map((id, index) => { const Icon = icons[index]; return <button key={id} className={view === id ? "active" : ""} onClick={() => { setView(id); setMenu(false); }}><Icon size={17} />{t.nav[index]}</button>; })}</nav>
-      <div className="nav-end"><span className="demo-chip"><span />{t.demo}</span><button className="language-switch" onClick={switchLanguage} aria-label={lang === "de" ? "Switch to English" : "Auf Deutsch wechseln"}><strong>{lang.toUpperCase()}</strong><span>{lang === "de" ? "EN" : "DE"}</span></button><button className="profile" onClick={() => setAccountOpen(true)} title={t.account}>{initials}</button><button className="menu-button" onClick={() => setMenu(!menu)} aria-label="Menu"><Menu /></button></div>
+
+  if (status === "loading") return <main className="center"><div><div className="pulse" /><p>{t.loading}</p></div></main>;
+  if (status === "error" || !state) return <main className="center"><div><h1>{t.brand}</h1><p>{loadError === "unauthorized" ? t.signIn : loadError}</p><button className="btn primary" onClick={() => void load()} style={{ marginTop: 14 }}>{t.retry}</button></div></main>;
+
+  const views: Array<[View, string, typeof MessageSquare]> = [["chat", t.tabs.chat, MessageSquare], ["picture", t.tabs.picture, LayoutGrid], ["plan", t.tabs.plan, SlidersHorizontal]];
+
+  return <div className="shell">
+    <header className="topbar">
+      <button className="brand" onClick={() => setView("chat")}><span className="mark"><Sparkles /></span><span>{t.brand}<small>{t.tagline}</small></span></button>
+      <nav className="tabs" role="tablist" aria-label={t.brand}>{views.map(([id, label, Icon]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? "active" : ""} onClick={() => setView(id)}><Icon />{label}</button>)}</nav>
+      <div className="topbar-end">
+        <div className="lang-toggle">{(["de", "en"] as Lang[]).map(item => <button key={item} className={lang === item ? "active" : ""} onClick={() => void switchLanguage(item)} aria-label={item === "de" ? "Deutsch" : "English"}>{item.toUpperCase()}</button>)}</div>
+        <button className="avatar" onClick={() => setSettingsOpen(true)} aria-label={t.settings.title}>{state.profile?.name ? initials(state.profile.name) : <Settings2 size={16} />}</button>
+      </div>
     </header>
-    <div className="trust-strip"><ShieldCheck size={15} /><span>{t.trust}</span><i />{t.trust2}</div>
-    {notice && <div className="toast"><CircleCheck size={18} />{notice}<button onClick={() => setNotice("")} aria-label={t.close}><X size={16} /></button></div>}
-    <div className="page-wrap">
-      {view === "start" && <Start lang={lang} profile={profile} account={account!} setView={setView} />}
-      {view === "review" && <Review lang={lang} setView={setView} onNotice={setNotice} />}
-      {view === "twin" && <Twin lang={lang} version={version} profile={profile} saveProfile={saveProfile} />}
-      {view === "portfolio" && <Portfolio lang={lang} profile={profile} setView={setView} />}
-      {view === "planning" && <Planning lang={lang} profile={profile} />}
-      {view === "assistant" && <Assistant lang={lang} account={account!} profile={profile} />}
+
+    <div className="content">
+      {view === "chat" && <div className="layout-chat">
+        <Chat state={state} lang={lang} messages={messages} setMessages={setMessages} applyState={applyState} registerSend={registerSend} onOpenPicture={() => setView("picture")} />
+        <PictureRail state={state} lang={lang} applyState={applyState} send={ask} toast={setToast} addMessage={addMessage} />
+      </div>}
+      {view === "picture" && <PictureView state={state} lang={lang} applyState={applyState} send={ask} toast={setToast} addMessage={addMessage} />}
+      {view === "plan" && <PlanView state={state} lang={lang} applyState={applyState} send={ask} toast={setToast} addMessage={addMessage} />}
     </div>
-    <footer><span>FinTwin · {t.demo}</span><span>{lang === "de" ? "Keine Finanz-, Anlage-, Versicherungs-, Steuer- oder Rechtsberatung." : "Not financial, investment, insurance, tax or legal advice."}</span></footer>
-    {accountOpen && account && <AccountDialog lang={lang} account={account} onClose={() => setAccountOpen(false)} onEdit={() => { setAccountOpen(false); setAccountStatus("onboarding"); }} />}
-  </main>;
-}
 
-function AccountLoading({ lang, onLanguage }: { lang: Lang; onLanguage: () => void }) {
-  const t = onboardingCopy[lang];
-  return <main className="onboarding-shell"><div className="onboarding-nav"><span className="onboarding-brand"><span className="brand-symbol"><i /><i /><i /></span>FinTwin</span><button className="language-switch" onClick={onLanguage} aria-label={lang === "de" ? "Switch to English" : "Auf Deutsch wechseln"}><strong>{lang.toUpperCase()}</strong><span>{lang === "de" ? "EN" : "DE"}</span></button></div><section className="account-loading"><span className="ai-orb"><Sparkles /></span><p>{t.loading}</p><div className="loading-line"><i /><i /><i /></div></section></main>;
-}
+    <footer className="footer">{t.disclaimer}</footer>
 
-function Onboarding({ lang, initial, onLanguage, onCancel, onComplete }: { lang: Lang; initial: AccountProfile | null; onLanguage: () => void; onCancel?: () => void; onComplete: (account: AccountProfile) => Promise<void> }) {
-  const t = onboardingCopy[lang];
-  const [step, setStep] = useState(0); const [name, setName] = useState(initial?.name ?? ""); const [netWorth, setNetWorth] = useState(String(initial?.netWorth ?? "")); const [expectations, setExpectations] = useState(initial?.expectations ?? ""); const [saving, setSaving] = useState(false); const [error, setError] = useState("");
-  const titles = [t.nameTitle, t.worthTitle, t.goalsTitle, t.bankTitle]; const descriptions = [t.nameText, t.worthText, t.goalsText, t.bankText];
-  const valid = step === 0 ? name.trim().length > 1 : step === 1 ? netWorth !== "" && Number.isFinite(Number(netWorth)) : step === 2 ? expectations.trim().length > 4 : true;
-  function next(event: FormEvent) { event.preventDefault(); if (valid) setStep(current => Math.min(3, current + 1)); }
-  async function connect() { setSaving(true); setError(""); try { await onComplete({ name: name.trim(), netWorth: Number(netWorth), expectations: expectations.trim(), bankConnected: true, language: lang }); } catch { setError(t.error); setSaving(false); } }
-  return <main className="onboarding-shell">
-    <div className="onboarding-nav"><span className="onboarding-brand"><span className="brand-symbol"><i /><i /><i /></span>FinTwin</span><div>{onCancel && <button className="onboarding-cancel" onClick={onCancel}>{copy[lang].cancel}</button>}<button className="language-switch" onClick={onLanguage} aria-label={lang === "de" ? "Switch to English" : "Auf Deutsch wechseln"}><strong>{lang.toUpperCase()}</strong><span>{lang === "de" ? "EN" : "DE"}</span></button></div></div>
-    <section className="onboarding-layout"><aside><p className="kicker"><span />{t.eyebrow}</p><h1>{t.title}</h1><p>{t.intro}</p><div className="setup-promise"><ShieldCheck /><span><strong>{lang === "de" ? "Sicher angemeldet" : "Securely signed in"}</strong><small>{lang === "de" ? "Ihr Profil gehört nur zu Ihrem Account." : "Your profile belongs only to your account."}</small></span></div></aside>
-      <div className="onboarding-card"><div className="onboarding-progress"><span>{t.step} {step + 1} {t.of} 4</span><div>{[0, 1, 2, 3].map(item => <i key={item} className={item <= step ? "active" : ""} />)}</div></div><div className="onboarding-question"><span className="question-icon">{step === 0 ? <UserRound /> : step === 1 ? <TrendingUp /> : step === 2 ? <Sparkles /> : <Link2 />}</span><h2>{titles[step]}</h2><p>{descriptions[step]}</p></div>
-        {step < 3 ? <form className="onboarding-form" onSubmit={next}>{step === 0 && <label>{t.nameLabel}<input autoFocus autoComplete="name" value={name} onChange={event => setName(event.target.value)} placeholder={t.namePlaceholder} maxLength={80} /></label>}{step === 1 && <label>{t.worthLabel}<span className="currency-input"><b>€</b><input autoFocus type="number" inputMode="decimal" value={netWorth} onChange={event => setNetWorth(event.target.value)} placeholder="487320" /></span><small>{t.worthHint}</small></label>}{step === 2 && <label>{t.goalsLabel}<textarea autoFocus rows={5} value={expectations} onChange={event => setExpectations(event.target.value)} placeholder={t.goalsPlaceholder} maxLength={500} /><small>{expectations.length}/500</small></label>}<div className="onboarding-actions">{step > 0 && <button type="button" className="button secondary" onClick={() => setStep(current => current - 1)}>{t.back}</button>}<button className="button dark" disabled={!valid}>{t.continue}<ArrowRight /></button></div></form> : <div className="bank-connect"><div className="bank-card"><span><Landmark /></span><div><strong>{t.bankName}</strong><p>{t.bankMeta}</p></div><CircleCheck /></div><p className="privacy-note"><LockKeyhole />{t.bankPrivacy}</p>{error && <p className="onboarding-error"><CircleAlert />{error}</p>}<div className="onboarding-actions"><button type="button" className="button secondary" disabled={saving} onClick={() => setStep(2)}>{t.back}</button><button type="button" className="button dark connect-bank" disabled={saving} onClick={() => void connect()}>{saving ? <>{t.connecting}</> : <>{t.connect}<Link2 /></>}</button></div></div>}
-      </div></section>
-  </main>;
-}
+    <nav className="bottom-tabs" aria-label={t.brand}>{views.map(([id, label, Icon]) => <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)} aria-current={view === id}><Icon />{label}</button>)}</nav>
 
-function AccountDialog({ lang, account, onClose, onEdit }: { lang: Lang; account: AccountProfile; onClose: () => void; onEdit: () => void }) {
-  const t = copy[lang];
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="edit-dialog account-dialog" onMouseDown={event => event.stopPropagation()} aria-label={t.account}><button type="button" className="modal-close" onClick={onClose} aria-label={t.close}><X /></button><span className="account-avatar">{account.name.split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase()}</span><div><p className="kicker dark">{t.account}</p><h2>{account.name}</h2><p className="account-status"><ShieldCheck />{t.signedIn}</p></div><div className="account-facts"><div><span>{t.netWorth}</span><strong>{money(account.netWorth, lang)}</strong></div><div><span>{lang === "de" ? "Erwartungen" : "Expectations"}</span><p>{account.expectations}</p></div><div><span>{lang === "de" ? "Datenverbindung" : "Data connection"}</span><strong><CircleCheck />{t.connected}</strong></div></div><div className="dialog-actions account-actions"><a className="button secondary" href="/signout-with-chatgpt?return_to=/" target="_top"><LogOut />{t.signOut}</a><button className="button dark" onClick={onEdit}><Edit3 />{t.editAccount}</button></div></section></div>;
-}
-
-function Start({ lang, profile, account, setView }: { lang: Lang; profile: Profile; account: AccountProfile; setView: (view: View) => void }) {
-  const t = copy[lang]; const netWorth = profile.netWorth;
-  const topics = [[t.mortgage, t.mortgageText, "amber", Landmark], [t.costs, t.costsText, "coral", WalletCards], [t.protection, t.protectionText, "blue", ShieldCheck]] as const;
-  return <>
-    <section className="hero"><div className="hero-copy"><p className="kicker"><span />{lang === "de" ? "Finanzlage · 30. August 2026" : "Financial position · 30 August 2026"}</p><h1>{t.greeting},<br /><em>{account.name}.</em></h1><p>{t.intro}</p><p className="goal-line"><Sparkles />{account.expectations}</p><div className="hero-actions"><button className="button light" onClick={() => setView("review")}>{t.openReview} <ArrowRight size={17} /></button><button className="button ghost" onClick={() => setView("assistant")}><Mic size={17} /> {t.ask}</button></div></div><div className="hero-score"><div className="score-ring"><span><strong>96</strong><small>%</small></span></div><div><strong>{t.complete}</strong><p>{t.reconciled}</p><span className="verified"><Check size={13} /> {t.current}</span></div></div></section>
-    <section className="numbers" aria-label="Metrics"><article><p>{t.netWorth}</p><strong>{money(netWorth, lang)}</strong><span className="up"><TrendingUp size={14} /> {money(18460, lang)} · 12M</span></article><article><p>{t.cashflow}</p><strong>{money(568, lang)} <small>/ {t.month}</small></strong><span className="down">{money(185, lang)} {lang === "de" ? "unter Vorjahr" : "below last year"}</span></article><article><p>{t.reserve}</p><strong>{profile.runway.toLocaleString(lang === "de" ? "de-DE" : "en-GB")} <small>{lang === "de" ? "Monate" : "months"}</small></strong><span className="up"><Check size={14} /> {t.target}</span></article><article><p>{t.quality}</p><strong>100 %</strong><span><Database size={14} /> {t.matched}</span></article></section>
-    <section className="section-head"><div><p className="kicker dark">{t.important}</p><h2>{t.next}</h2></div><button className="text-button" onClick={() => setView("review")}>{t.all} <ArrowRight size={16} /></button></section>
-    <section className="topic-grid">{topics.map(([title, text, tone, Icon]) => <button key={title} className="topic-card" onClick={() => setView("review")}><span className={`topic-icon ${tone}`}><Icon /></span><span><small>{title}</small><strong>{text}</strong><em>{lang === "de" ? "Öffnen und Angaben ergänzen" : "Open and add details"}</em></span><ChevronRight /></button>)}</section>
-    <section className="flow-grid"><article className="panel cash-panel"><div className="panel-title"><div><p className="kicker dark">Cashflow</p><h2>{t.cashTitle}</h2></div><span>{lang === "de" ? "August 2026" : "August 2026"}</span></div><div className="flow"><div><span>{t.income}</span><strong>{money(profile.income, lang)}</strong></div><ArrowRight /><div><span>{t.expenses}</span><strong>{money(profile.income - 568, lang)}</strong></div><ArrowRight /><div className="flow-result"><span>{t.left}</span><strong>{money(568, lang)}</strong></div></div><div className="mini-chart">{[48,54,51,60,58,66,64,72,62,55,49,43].map((v,i)=><i key={i} style={{height:`${v}%`}} className={i>8?"warn":""} />)}</div><p className="insight"><CircleAlert size={16} /> {t.rise}</p></article><article className="panel ask-preview"><span className="ai-orb"><Sparkles /></span><p className="kicker dark">FinTwin AI</p><h2>{t.askSimple}</h2><p>{t.askBlurb}</p><button className="voice-preview" onClick={() => setView("assistant")}><span><Mic /></span><strong>{t.startVoice}</strong><small>{t.tapSpeak}</small><Play size={18} /></button><p className="safe"><ShieldCheck size={14} /> {t.noProducts}</p></article></section>
-  </>;
-}
-
-const reviewData: Record<ReviewKey, { de: [string,string,string]; en: [string,string,string] }> = {
-  protection:{de:["Absicherung","Daten ergänzen","Annas Einkommensschutz ist nicht bestätigt"],en:["Protection","Add details","Anna’s income protection is not confirmed"]},
-  retirement:{de:["Altersvorsorge","Prüfen","Netto-Rentenansprüche fehlen"],en:["Retirement","Review","Confirmed net pension income is missing"]},
-  wealth:{de:["Vermögensaufbau","Gut aufgestellt","Depotbeiträge sind vollständig abgeglichen"],en:["Wealth building","Well positioned","Investment contributions are fully reconciled"]},
-  home:{de:["Wohneigentum","Handlungsbedarf","Zinsbindung endet am 31.10.2027"],en:["Home ownership","Action needed","Fixed-rate period ends on 31 Oct 2027"]},
-  liquidity:{de:["Sparen & Liquidität","Beobachten","Laufende Kosten steigen"],en:["Saving & liquidity","Monitor","Recurring costs are rising"]},
-  family:{de:["Familie & Bildung","Ziel klären","Zielbetrag und Zeitpunkt fehlen"],en:["Family & education","Clarify goal","Target amount and date are missing"]},
-};
-
-function Review({ lang, setView, onNotice }: { lang: Lang; setView: (view: View) => void; onNotice: (text: string) => void }) {
-  const t = copy[lang]; const [selected, setSelected] = useState<ReviewKey | null>(null);
-  const [details, setDetails] = useState<Record<string,{status:string;notes:string}>>({});
-  useEffect(()=>{const raw=localStorage.getItem("fintwin-review-details");if(raw)try{setDetails(JSON.parse(raw));}catch{}},[]);
-  function save(key: ReviewKey, value:{status:string;notes:string}){const next={...details,[key]:value};setDetails(next);localStorage.setItem("fintwin-review-details",JSON.stringify(next));setSelected(null);onNotice(t.saved);}
-  return <><PageHead overline={t.reviewOver} title={t.reviewTitle} text={t.reviewText} /><div className="review-summary"><span><CircleCheck /> {t.strength}</span><span><CircleAlert /> {t.checks}</span><span><Database /> {t.gaps}</span></div><section className="review-list">{(Object.keys(reviewData) as ReviewKey[]).map((key,index)=>{const row=reviewData[key][lang];const tone=index===2?"good":index===1||index===4?"check":"open";return <button className="review-row" key={key} onClick={()=>setSelected(key)}><span className={`status-dot ${tone}`} /><span className="review-row-copy"><small>{row[0]}</small><strong>{row[1]}</strong><p>{details[key]?.notes||row[2]}</p></span><span className="row-action"><Edit3 size={15}/>{t.edit}</span><ChevronRight /></button>})}</section><div className="next-banner"><div><FileText /><span><strong>{t.ready}</strong><p>{t.readyText}</p></span></div><button className="button dark" onClick={() => setView("assistant")}>{t.prepare} <ArrowRight /></button></div>{selected&&<ReviewDialog lang={lang} itemKey={selected} initial={details[selected]} onClose={()=>setSelected(null)} onSave={save}/>}</>;
-}
-
-function ReviewDialog({lang,itemKey,initial,onClose,onSave}:{lang:Lang;itemKey:ReviewKey;initial?:{status:string;notes:string};onClose:()=>void;onSave:(key:ReviewKey,value:{status:string;notes:string})=>void}){
-  const t=copy[lang];const item=reviewData[itemKey][lang];const [status,setStatus]=useState(initial?.status||"review");const [notes,setNotes]=useState(initial?.notes||item[2]);
-  return <div className="modal-backdrop" onMouseDown={onClose}><form className="edit-dialog" onSubmit={e=>{e.preventDefault();onSave(itemKey,{status,notes})}} onMouseDown={e=>e.stopPropagation()}><button type="button" className="modal-close" onClick={onClose} aria-label={t.close}><X/></button><p className="kicker dark">{item[0]}</p><h2>{t.details}</h2><label>{t.status}<select value={status} onChange={e=>setStatus(e.target.value)}><option value="confirmed">{t.confirmed}</option><option value="review">{t.review}</option><option value="missing">{t.missing}</option></select></label><label>{t.notes}<textarea rows={5} value={notes} onChange={e=>setNotes(e.target.value)}/></label><p className="local-note"><Database size={14}/>{t.local}</p><div className="dialog-actions"><button type="button" className="button secondary" onClick={onClose}>{t.cancel}</button><button className="button dark"><Save size={16}/>{t.save}</button></div></form></div>;
-}
-
-const factDefs: Array<{key:keyof Profile;de:string;en:string;source:string;confidence:string}> = [
-  {key:"netWorth",de:"Angegebenes Nettovermögen",en:"Declared net worth",source:"Onboarding",confidence:"100 %"}, {key:"income",de:"Nettoeinkommen",en:"Net household income",source:"Demo bank",confidence:"100 %"}, {key:"assets",de:"Finanzvermögen",en:"Financial assets",source:"Demo model",confidence:"98 %"}, {key:"property",de:"Immobilie",en:"Property",source:"Demo model",confidence:"90 %"}, {key:"mortgage",de:"Hypothek",en:"Mortgage",source:"Demo model",confidence:"99 %"}, {key:"retirementAge",de:"Renten-Zielalter",en:"Retirement target age",source:"Confirmed",confidence:"100 %"}, {key:"runway",de:"Notfallreserve",en:"Emergency runway",source:"Calculated",confidence:"100 %"},
-];
-
-function Twin({lang,version,profile,saveProfile}:{lang:Lang;version:number;profile:Profile;saveProfile:(profile:Profile)=>void}){
-  const t=copy[lang];const [editing,setEditing]=useState<keyof Profile|null>(null);
-  function display(key:keyof Profile){const value=profile[key];if(["netWorth","income","assets","property","mortgage"].includes(key))return key==="income"?`${money(value,lang)} / ${t.month}`:money(value,lang);if(key==="retirementAge")return `${value} ${lang==="de"?"Jahre":"years"}`;return `${value.toLocaleString(lang==="de"?"de-DE":"en-GB")} ${lang==="de"?"Monate":"months"}`}
-  return <><PageHead overline={t.twinOver} title={`${lang==="de"?"Version":"Version"} ${version}. ${lang==="de"?"Vollständig nachvollziehbar.":"Fully traceable."}`} text={t.twinText}/><section className="panel twin-card"><div className="twin-top"><span><Database/>FinTwin v{version}</span><small>{t.lastSync}</small></div><div className="fact-table"><div className="fact-head"><span>{t.fact}</span><span>{t.value}</span><span>{t.source}</span><span>{t.confidence}</span><span/></div>{factDefs.map(def=><div className="fact-row" key={def.key}><strong>{lang==="de"?def.de:def.en}</strong><span>{display(def.key)}</span><span className="source">{def.source}</span><span>{def.confidence}</span><button onClick={()=>setEditing(def.key)}><Edit3 size={13}/>{t.edit}</button></div>)}</div></section><section className="principle-grid"><article><ShieldCheck/><h3>{t.noSilent}</h3><p>{t.noSilentText}</p></article><article><Database/><h3>{t.sourcesVisible}</h3><p>{t.sourcesVisibleText}</p></article><article><RotateCcw/><h3>{t.reproducible}</h3><p>{t.reproducibleText}</p></article></section>{editing&&<FactDialog lang={lang} field={editing} value={profile[editing]} onClose={()=>setEditing(null)} onSave={value=>{saveProfile({...profile,[editing]:value});setEditing(null)}}/>}</>;
-}
-
-function FactDialog({lang,field,value,onClose,onSave}:{lang:Lang;field:keyof Profile;value:number;onClose:()=>void;onSave:(value:number)=>void}){const t=copy[lang];const def=factDefs.find(x=>x.key===field)!;const [next,setNext]=useState(value);return <div className="modal-backdrop" onMouseDown={onClose}><form className="edit-dialog compact" onSubmit={e=>{e.preventDefault();onSave(next)}} onMouseDown={e=>e.stopPropagation()}><button type="button" className="modal-close" onClick={onClose}><X/></button><p className="kicker dark">{t.twinOver}</p><h2>{lang==="de"?def.de:def.en}</h2><label>{t.value}<input autoFocus type="number" step={field==="runway"?.1:1} min="0" value={next} onChange={e=>setNext(Number(e.target.value))}/></label><p className="local-note"><ShieldCheck size={14}/>{lang==="de"?"Bestätigung erstellt eine neue Twin-Version.":"Confirmation creates a new twin version."}</p><div className="dialog-actions"><button type="button" className="button secondary" onClick={onClose}>{t.cancel}</button><button className="button dark"><Save size={16}/>{t.save}</button></div></form></div>}
-
-const fallbackHoldings: PortfolioHolding[] = [
-  ["AAPL","Apple",90,"USD",316.85,272.72,24545,14718,38.4,16.5,"Technology"],
-  ["MSFT","Microsoft",60,"USD",507.29,436.64,26198,17558,1.3,17.6,"Technology"],
-  ["NVDA","NVIDIA",120,"USD",220.78,190.04,22804,9812,29.4,15.3,"Technology"],
-  ["VWCE.DE","Vanguard FTSE All-World ETF",300,"EUR",166.66,166.66,49998,33000,22.7,33.6,"Global equity ETF"],
-  ["SAP.DE","SAP",100,"EUR",190.9,190.9,19090,15000,-17,12.8,"Technology"],
-  ["VOW3.DE","Volkswagen preference",80,"EUR",77.68,77.68,6214,9200,-17.1,4.2,"Automotive"],
-].map(([symbol,name,quantity,currency,price,priceEur,valueEur,costBasisEur,oneYearChangePct,weightPct,sector])=>({symbol:String(symbol),name:String(name),quantity:Number(quantity),currency:String(currency),price:Number(price),priceEur:Number(priceEur),valueEur:Number(valueEur),costBasisEur:Number(costBasisEur),gainEur:Number(valueEur)-Number(costBasisEur),gainPct:(Number(valueEur)/Number(costBasisEur)-1)*100,oneYearChangePct:Number(oneYearChangePct),weightPct:Number(weightPct),sector:String(sector),quoteSource:"snapshot"}));
-const fallbackPortfolio: PortfolioData = {
-  connection:{name:"FinTwin Demo Brokerage",status:"connected",accountEnding:"4821",mode:"shared synthetic holdings"},asOf:"2026-08-31T20:00:00Z",pricing:{status:"delayed reference prices",provider:"market snapshot",containsFallback:true},
-  summary:{marketValueEur:148850,costBasisEur:99288,gainEur:49562,gainPct:49.92,oneYearChangePct:39.9,topThreeWeightPct:67.7},holdings:fallbackHoldings,
-  sectorAllocation:[{name:"Technology",valueEur:92637,weightPct:62.2},{name:"Global equity ETF",valueEur:49998,weightPct:33.6},{name:"Automotive",valueEur:6214,weightPct:4.2}],
-  history:[["2025-09",106400],["2025-10",109850],["2025-11",116920],["2025-12",118140],["2026-01",119760],["2026-02",123880],["2026-03",129420],["2026-04",126730],["2026-05",133960],["2026-06",139520],["2026-07",144870],["2026-08",148850]].map(([month,valueEur])=>({month:String(month),valueEur:Number(valueEur)})),
-  activity:[["2026-07-16","NVDA",50,174.6],["2026-06-25","MSFT",20,475.2],["2026-05-12","AAPL",35,205.7],["2026-03-17","VWCE.DE",130,139.2],["2026-01-19","VOW3.DE",40,78.5],["2025-11-05","SAP.DE",60,161.9]].map(([date,symbol,quantity,price])=>({date:String(date),symbol:String(symbol),action:"Buy",quantity:Number(quantity),price:Number(price)})),
-  balanceSheet:{assets:[{id:"savings_emergency",type:"savings",name:"Emergency savings",institution:"Demo Bank",valueEur:39100},{id:"savings_fixed",type:"savings",name:"Term deposit",institution:"Demo Bank",valueEur:22800},{id:"retirement_pension",type:"retirement",name:"Private retirement account",institution:"Demo Pension",valueEur:96600},{id:"property_munich",type:"property",name:"Munich family home",valueEur:420000},{id:"brokerage",type:"investments",name:"Demo brokerage",valueEur:148850}],liabilities:[{id:"mortgage_home",type:"mortgage",name:"Home mortgage",valueEur:240000,fixedUntil:"2027-10-31",ratePct:2.15}],totalAssetsEur:727350,totalLiabilitiesEur:240000,modeledNetWorthEur:487350,declaredNetWorthEur:487320,reconciliationDifferenceEur:-30},
-};
-
-function Portfolio({lang,profile,setView}:{lang:Lang;profile:Profile;setView:(view:View)=>void}){
-  const [data,setData]=useState<PortfolioData>(fallbackPortfolio);const [loading,setLoading]=useState(true);const [fresh,setFresh]=useState(false);
-  const labels=lang==="de"?{over:"Vermögen & Portfolio",title:"Alles, was Ihnen gehört. Und alles, was Sie schulden.",text:"Depot, Sparguthaben, Altersvorsorge, Immobilie und Hypothek in einem abgestimmten Finanzbild.",connected:"Demo-Depot verbunden",value:"Depotwert",growth:"Wertentwicklung · 12 M",gain:"Gewinn seit Kauf",concentration:"Top-3-Konzentration",history:"Historische Entwicklung",holdings:"Positionen",holding:"Anlage",qty:"Stück",price:"Kurs",weight:"Anteil",year:"12 M",assets:"Vermögen",liabilities:"Verbindlichkeiten",net:"Modelliertes Nettovermögen",declared:"Von Ihnen angegeben",activity:"Fiktive Kaufhistorie",refresh:"Kurse aktualisieren",ask:"Portfolio mit FinTwin besprechen",delayed:"Verzögerte Referenzkurse",fallback:"Markt-Snapshot",source:"Öffentliche Kursdaten · nicht für Handel",demo:"Alle Positionen und Käufe sind fiktiv.",bought:"Gekauft",tech:"Technologieanteil"}:{over:"Wealth & portfolio",title:"Everything you own. And everything you owe.",text:"Brokerage, savings, retirement, property and mortgage reconciled in one financial picture.",connected:"Demo brokerage connected",value:"Portfolio value",growth:"Performance · 12M",gain:"Gain since purchase",concentration:"Top-three concentration",history:"Backdated performance",holdings:"Holdings",holding:"Investment",qty:"Units",price:"Price",weight:"Weight",year:"12M",assets:"Assets",liabilities:"Liabilities",net:"Modelled net worth",declared:"Declared by you",activity:"Fictional acquisition history",refresh:"Refresh prices",ask:"Discuss portfolio with FinTwin",delayed:"Delayed reference prices",fallback:"Market snapshot",source:"Public price data · not for trading",demo:"All positions and purchases are fictional.",bought:"Bought",tech:"Technology exposure"};
-  const refresh=useCallback(async()=>{setLoading(true);try{const body=await fetch(`${api}/v1/portfolio`,{cache:"no-store"}).then(response=>response.ok?response.json():Promise.reject());setData(body.data);setFresh(!body.data.pricing.containsFallback);}catch{setData({...fallbackPortfolio,balanceSheet:{...fallbackPortfolio.balanceSheet,declaredNetWorthEur:profile.netWorth,reconciliationDifferenceEur:profile.netWorth-fallbackPortfolio.balanceSheet.modeledNetWorthEur}});setFresh(false);}finally{setLoading(false)}},[profile.netWorth]);
-  useEffect(()=>{void refresh()},[refresh]);
-  const values=data.history.map(item=>item.valueEur),min=Math.min(...values),max=Math.max(...values);const iconFor=(type:string)=>type==="property"?Building2:type==="savings"?PiggyBank:type==="retirement"?TrendingUp:Briefcase;
-  return <><PageHead overline={labels.over} title={labels.title} text={labels.text}/><section className="portfolio-toolbar"><div className="connection-pill"><span><Link2/></span><div><strong>{labels.connected}</strong><small>{data.connection.name} · •••• {data.connection.accountEnding}</small></div><CircleCheck/></div><div><span className={`market-dot ${fresh?"fresh":"snapshot"}`}/><strong>{fresh?labels.delayed:labels.fallback}</strong><small>{data.asOf?new Date(data.asOf).toLocaleString(lang==="de"?"de-DE":"en-GB",{dateStyle:"medium",timeStyle:"short"}):""}</small><button onClick={()=>void refresh()} disabled={loading}><RefreshCw className={loading?"spin":""}/>{labels.refresh}</button></div></section>
-  <section className="portfolio-metrics"><article><span>{labels.value}</span><strong>{money(data.summary.marketValueEur,lang)}</strong><em className="positive"><TrendingUp/>{data.summary.oneYearChangePct.toFixed(1)} %</em></article><article><span>{labels.gain}</span><strong>{money(data.summary.gainEur,lang)}</strong><em className={data.summary.gainEur>=0?"positive":"negative"}>{data.summary.gainPct.toFixed(1)} %</em></article><article><span>{labels.concentration}</span><strong>{data.summary.topThreeWeightPct.toFixed(1)} %</strong><em><PieChart/>{labels.tech}: {data.sectorAllocation.find(item=>item.name==="Technology")?.weightPct.toFixed(1)} %</em></article><article className="net-worth-metric"><span>{labels.net}</span><strong>{money(data.balanceSheet.modeledNetWorthEur,lang)}</strong><em>{labels.declared}: {money(profile.netWorth,lang)}</em></article></section>
-  <section className="portfolio-layout"><article className="panel history-panel"><div className="panel-title"><div><p className="kicker dark">{labels.growth}</p><h2>{labels.history}</h2></div><span>{money(data.history.at(-1)?.valueEur||0,lang)}</span></div><div className="portfolio-chart" aria-label={labels.history}>{data.history.map(item=>{const height=max===min?70:25+(item.valueEur-min)/(max-min)*75;return <div key={item.month}><i style={{height:`${height}%`}} title={`${item.month}: ${money(item.valueEur,lang)}`}/><small>{item.month.slice(5)}</small></div>})}</div><p className="data-disclaimer"><Clock/>{labels.source}. {labels.demo}</p></article><article className="panel allocation-panel"><p className="kicker dark">Allocation</p><h2>{lang==="de"?"Wo Ihr Depot konzentriert ist":"Where your portfolio is concentrated"}</h2><div className="allocation-bar">{data.sectorAllocation.map((item,index)=><i key={item.name} style={{width:`${item.weightPct}%`}} className={`allocation-${index}`} title={`${item.name} ${item.weightPct.toFixed(1)}%`}/>)}</div><div className="allocation-list">{data.sectorAllocation.map((item,index)=><div key={item.name}><span><i className={`allocation-${index}`}/>{item.name}</span><strong>{item.weightPct.toFixed(1)} %</strong></div>)}</div><button className="button dark" onClick={()=>setView("assistant")}><Sparkles/>{labels.ask}</button></article></section>
-  <section className="panel holdings-panel"><div className="panel-title"><div><p className="kicker dark">{labels.holdings}</p><h2>{lang==="de"?"Ihr verbundenes Demo-Depot":"Your connected demo brokerage"}</h2></div><span>{data.holdings.length} {labels.holdings.toLowerCase()}</span></div><div className="holdings-table"><div className="holdings-head"><span>{labels.holding}</span><span>{labels.qty}</span><span>{labels.price}</span><span>{labels.value}</span><span>{labels.weight}</span><span>{labels.year}</span></div>{data.holdings.map(item=><div className="holding-row" key={item.symbol}><span><b>{item.symbol}</b><small>{item.name}</small></span><span>{item.quantity}</span><span>{item.currency==="EUR"?money(item.price,lang,2):new Intl.NumberFormat(lang==="de"?"de-DE":"en-US",{style:"currency",currency:item.currency}).format(item.price)}</span><strong>{money(item.valueEur,lang)}</strong><span>{item.weightPct.toFixed(1)} %</span><em className={item.oneYearChangePct>=0?"positive":"negative"}>{item.oneYearChangePct>=0?"+":""}{item.oneYearChangePct.toFixed(1)} %</em></div>)}</div></section>
-  <div className="portfolio-section-head"><div><p className="kicker dark">Balance sheet</p><h2>{lang==="de"?"Ihr vollständiges Finanzbild":"Your complete financial picture"}</h2></div><div><span>{labels.assets} <strong>{money(data.balanceSheet.totalAssetsEur,lang)}</strong></span><span>{labels.liabilities} <strong>− {money(data.balanceSheet.totalLiabilitiesEur,lang)}</strong></span></div></div><section className="balance-grid">{data.balanceSheet.assets.map(item=>{const Icon=iconFor(item.type);return <article key={item.id}><span className={`balance-icon ${item.type}`}><Icon/></span><div><small>{item.institution||item.type}</small><strong>{item.name}</strong><p>{item.type==="investments"?labels.delayed:item.type==="property"?(lang==="de"?"Immobilienbewertung":"Property valuation"):(lang==="de"?"Demo-Konto":"Demo account")}</p></div><b>{money(item.valueEur,lang)}</b></article>})}{data.balanceSheet.liabilities.map(item=><article className="liability" key={item.id}><span className="balance-icon mortgage"><Landmark/></span><div><small>{lang==="de"?"Hypothek":"Mortgage"}</small><strong>{item.name}</strong><p>{item.ratePct?.toFixed(2)} % · {lang==="de"?"fest bis":"fixed until"} {item.fixedUntil}</p></div><b>− {money(item.valueEur,lang)}</b></article>)}</section>
-  <section className="panel activity-panel"><div className="panel-title"><div><p className="kicker dark">History</p><h2>{labels.activity}</h2></div><span>{labels.demo}</span></div><div className="activity-list">{data.activity.slice(0,8).map((item,index)=><div key={`${item.date}-${item.symbol}-${index}`}><span><Clock/><small>{new Date(`${item.date}T12:00:00Z`).toLocaleDateString(lang==="de"?"de-DE":"en-GB",{day:"2-digit",month:"short",year:"numeric"})}</small></span><strong>{labels.bought} {item.quantity} × {item.symbol}</strong><em>{item.symbol.endsWith(".DE")?money(item.price,lang,2):new Intl.NumberFormat("en-US",{style:"currency",currency:"USD"}).format(item.price)}</em></div>)}</div></section></>;
-}
-
-function Planning({lang,profile}:{lang:Lang;profile:Profile}){
-  const t=copy[lang];const [tab,setTab]=useState<"mortgage"|"retirement">("mortgage");const [principal,setPrincipal]=useState(profile.mortgage);const [years,setYears]=useState(20);const [age,setAge]=useState(profile.retirementAge);const [saving,setSaving]=useState(850);
-  const payments=useMemo(()=>[4,5,6].map(rate=>{const months=years*12,r=rate/100/12;return principal*r/(1-Math.pow(1+r,-months))}),[principal,years]);
-  const projected=useMemo(()=>{const months=Math.max(1,(age-52)*12),r=.035/12;return profile.assets*Math.pow(1+r,months)+saving*((Math.pow(1+r,months)-1)/r)},[age,saving,profile.assets]);const required=325714;const ratio=Math.min(199,Math.round(projected/required*100));
-  return <><PageHead overline={t.planningOver} title={t.planningTitle} text={t.planningText}/><div className="plan-tabs"><button className={tab==="mortgage"?"active":""} onClick={()=>setTab("mortgage")}><Landmark/>{t.financing}</button><button className={tab==="retirement"?"active":""} onClick={()=>setTab("retirement")}><TrendingUp/>{t.pension}</button></div>{tab==="mortgage"?<section className="scenario editable-scenario"><div className="scenario-copy"><p className="kicker dark">{t.financing}</p><h2>{t.rateQuestion}</h2><label>{t.remaining}<span>{money(principal,lang)}</span><input type="range" min="50000" max="600000" step="5000" value={principal} onChange={e=>setPrincipal(Number(e.target.value))}/></label><label>{t.term}<span>{years} {t.years}</span><input type="range" min="5" max="35" value={years} onChange={e=>setYears(Number(e.target.value))}/></label><div className="assumption"><ShieldCheck/>{t.modelOnly}</div></div><div className="rate-cards">{[4,5,6].map((rate,i)=><article className={i===1?"focus":""} key={rate}><span>{rate} %</span><strong>{money(payments[i],lang,2)}</strong><small>{t.perMonth}</small><em>{i===0?(lang==="de"?"Basis":"Baseline"):`+ ${money(payments[i]-payments[0],lang,2)}`}</em></article>)}</div></section>:<section className="scenario editable-scenario retirement"><div className="scenario-copy"><p className="kicker dark">{t.pension}</p><h2>{ratio} % {t.goalCapital}</h2><label>{t.pensionAge}<span>{age}</span><input type="range" min="58" max="70" value={age} onChange={e=>setAge(Number(e.target.value))}/></label><label>{t.monthlySaving}<span>{money(saving,lang)}</span><input type="range" min="0" max="2500" step="50" value={saving} onChange={e=>setSaving(Number(e.target.value))}/></label><p>{money(projected,lang)} {lang==="de"?"modelliertes Kapital":"modelled capital"}</p></div><div className="retire-ring" style={{background:`conic-gradient(var(--teal) 0 ${Math.min(100,ratio)}%,#dfe8e4 ${Math.min(100,ratio)}%)`}}><span><strong>{ratio}</strong>%</span></div></section>}</>;
-}
-
-function Assistant({lang,account,profile}:{lang:Lang;account:AccountProfile;profile:Profile}){
-  const t=copy[lang];const welcome=lang==="de"?`Hallo ${account.name}. Ich habe Ihr vollständiges Finanzbild vor mir – einschließlich Depot, Sparguthaben, Immobilie und Hypothek. Womit möchten Sie anfangen?`:`Hi ${account.name}. I have your complete financial picture in front of me—including the portfolio, savings, property and mortgage. Where would you like to start?`;
-  const labels=lang==="de"?{conversation:"Freies Sprachgespräch starten",end:"Sprachgespräch beenden",natural:"Weibliche Gesprächsstimme",listen:"Ich höre zu – nach einer Sprechpause antworte ich automatisch.",monitor:"Gespräche werden für Kontinuität, Sicherheit und Qualitätskontrolle gespeichert.",history:"Frühere Unterhaltung geladen",permission:"Der Mikrofonzugriff wurde nicht erlaubt. Öffnen Sie die Website-Einstellungen in Chrome und erlauben Sie das Mikrofon.",unsupported:"Dieser Browser unterstützt keine Audioaufnahme.",empty:"Ich habe keine verständliche Aufnahme erhalten. Bitte sprechen Sie etwas länger.",failed:"Die Aufnahme konnte nicht transkribiert werden. Prüfen Sie das ausgewählte Mikrofon und Ihre Verbindung."}:{conversation:"Start open voice conversation",end:"End voice conversation",natural:"Female conversational voice",listen:"I’m listening—after a pause, I’ll answer automatically.",monitor:"Conversations are saved for continuity, safety and quality monitoring.",history:"Earlier conversation loaded",permission:"Microphone access was not allowed. Open Chrome’s site settings and allow microphone access.",unsupported:"This browser does not support audio recording.",empty:"I did not receive a usable recording. Please speak for a little longer.",failed:"The recording could not be transcribed. Check the selected microphone and your connection."};
-  const [messages,setMessages]=useState<Message[]>([{role:"assistant",text:welcome,sources:["account_profile","household_balance_sheet"],mode:"start"}]);const [input,setInput]=useState("");const [loading,setLoading]=useState(false);const [listening,setListening]=useState(false);const [aiLive,setAiLive]=useState(false);const [devices,setDevices]=useState<MediaDeviceInfo[]>([]);const [deviceId,setDeviceId]=useState("");const [micOpen,setMicOpen]=useState(false);const [voiceMode,setVoiceMode]=useState(false);
-  const recorder=useRef<MediaRecorder|null>(null),chunks=useRef<Blob[]>([]),stream=useRef<MediaStream|null>(null),activeAudio=useRef<HTMLAudioElement|null>(null),audioContext=useRef<AudioContext|null>(null),silenceFrame=useRef<number|null>(null),recordingRef=useRef(false),voiceModeRef=useRef(false),cancelledRef=useRef(false),busyRef=useRef(false),messageEnd=useRef<HTMLDivElement|null>(null);
-  useEffect(()=>{fetch(`${api}/health`).then(r=>r.json()).then(v=>setAiLive(Boolean(v.ai_available))).catch(()=>setAiLive(false));fetch(`${api}/v1/copilot/history`,{cache:"no-store"}).then(r=>r.ok?r.json():Promise.reject()).then(body=>{const history=body.data?.messages as Message[]|undefined;if(history?.length)setMessages([{role:"assistant",text:welcome,sources:["account_profile","household_balance_sheet"],mode:"start"},...history])}).catch(()=>{});return()=>{voiceModeRef.current=false;cancelledRef.current=true;if(recorder.current?.state==="recording")recorder.current.stop();stream.current?.getTracks().forEach(track=>track.stop());activeAudio.current?.pause();speechSynthesis?.cancel();if(silenceFrame.current)cancelAnimationFrame(silenceFrame.current);void audioContext.current?.close();}},[welcome]);
-  useEffect(()=>{messageEnd.current?.scrollIntoView({behavior:"smooth",block:"end"})},[messages,loading]);
-  useEffect(()=>{setMessages(current=>current.length===1?[{...current[0],text:welcome}]:current)},[welcome]);
-  function speechChunks(text:string){const sentences=text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[text];const result:string[]=[];let current="";for(const sentence of sentences){const clean=sentence.trim();if(clean.length>190){if(current){result.push(current);current=""}for(let index=0;index<clean.length;index+=190)result.push(clean.slice(index,index+190));}else if((current+" "+clean).trim().length<=190)current=(current+" "+clean).trim();else{result.push(current);current=clean}}if(current)result.push(current);return result;}
-  function speakSystem(text:string){return new Promise<void>(resolve=>{if(!("speechSynthesis" in window)){resolve();return}speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(text),voices=speechSynthesis.getVoices(),preferred=lang==="de"?["Google Deutsch","Anna","Katja","Marlene","Helena","Vicki"]:["Google UK English Female","Samantha","Ava","Serena","Moira","Tessa","Karen","Victoria"];utterance.voice=preferred.map(name=>voices.find(voice=>voice.name.toLowerCase().includes(name.toLowerCase()))).find(Boolean)||voices.find(voice=>voice.lang.toLowerCase().startsWith(lang))||null;utterance.lang=lang==="de"?"de-DE":"en-GB";utterance.rate=.98;utterance.pitch=1.02;utterance.onend=()=>resolve();utterance.onerror=()=>resolve();speechSynthesis.speak(utterance)})}
-  function playAudio(blob:Blob){return new Promise<void>((resolve,reject)=>{const url=URL.createObjectURL(blob),audio=new Audio(url);activeAudio.current=audio;audio.onended=()=>{URL.revokeObjectURL(url);resolve()};audio.onerror=()=>{URL.revokeObjectURL(url);reject(new Error("audio"))};void audio.play().catch(reject)})}
-  async function speak(text:string){activeAudio.current?.pause();if(lang==="en")try{for(const chunk of speechChunks(text)){const response=await fetch(`${api}/v1/voice/synthesize`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:chunk,language:lang})});if(!response.ok)throw new Error("tts");await playAudio(await response.blob())}return}catch{}await speakSystem(text)}
-  async function ask(question:string,mode:"text"|"voice"="text"){if(!question.trim()||busyRef.current)return;busyRef.current=true;setMessages(current=>[...current,{role:"user",text:question,mode}]);setInput("");setLoading(true);let reply:Message;try{const response=await fetch(`${api}/v1/households/shared-demo/copilot/turns`,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({question,language:lang,mode,profile:{name:account.name,netWorth:profile.netWorth,expectations:account.expectations}})});if(!response.ok)throw new Error();const body=await response.json();reply={role:"assistant",text:body.data.display_response,sources:body.data.claims.flatMap((claim:{source_ids:string[]})=>claim.source_ids),mode:body.data.mode};setAiLive(body.data.mode==="groq_live");}catch{reply=localAnswer(question,lang,account,profile)}setMessages(current=>[...current,reply]);setLoading(false);busyRef.current=false;await speak(reply.text);if(voiceModeRef.current)setTimeout(()=>void startRecording(),350)}
-  function submit(event:FormEvent){event.preventDefault();void ask(input)}
-  function cleanupAnalysis(){if(silenceFrame.current)cancelAnimationFrame(silenceFrame.current);silenceFrame.current=null;if(audioContext.current){void audioContext.current.close();audioContext.current=null}}
-  function watchForSilence(media:MediaStream,active:MediaRecorder){const Context=window.AudioContext;const context=new Context(),analyser=context.createAnalyser(),source=context.createMediaStreamSource(media),samples=new Uint8Array(analyser.fftSize=512);source.connect(analyser);audioContext.current=context;const started=Date.now();let heard=false,lastVoice=started;function sample(){if(active.state!=="recording")return;analyser.getByteTimeDomainData(samples);let level=0;for(const value of samples)level+=Math.abs(value-128);level/=samples.length;if(level>3.8){heard=true;lastVoice=Date.now()}if((heard&&Date.now()-lastVoice>1350&&Date.now()-started>1200)||Date.now()-started>25000){active.stop();return}silenceFrame.current=requestAnimationFrame(sample)}sample()}
-  async function loadDevices(){try{const probe=await navigator.mediaDevices.getUserMedia({audio:true}),all=(await navigator.mediaDevices.enumerateDevices()).filter(device=>device.kind==="audioinput");setDevices(all);const preferred=all.find(device=>/macbook|built-in/i.test(device.label)&&!/iphone/i.test(device.label))||all.find(device=>!/iphone/i.test(device.label))||all[0];if(!deviceId&&preferred)setDeviceId(preferred.deviceId);probe.getTracks().forEach(track=>track.stop());return preferred?.deviceId||deviceId}catch{setMessages(current=>[...current,{role:"assistant",text:labels.permission}]);return ""}}
-  async function startRecording(){if(recordingRef.current||busyRef.current)return;if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==="undefined"){setMessages(current=>[...current,{role:"assistant",text:labels.unsupported}]);return}try{let selected=deviceId;if(!selected)selected=await loadDevices();cancelledRef.current=false;stream.current=await navigator.mediaDevices.getUserMedia({audio:selected?{deviceId:{exact:selected},echoCancellation:true,noiseSuppression:true,autoGainControl:true}:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});const all=(await navigator.mediaDevices.enumerateDevices()).filter(device=>device.kind==="audioinput");setDevices(all);const actual=stream.current.getAudioTracks()[0].getSettings().deviceId;if(actual)setDeviceId(actual);chunks.current=[];const active=new MediaRecorder(stream.current,{mimeType:MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":"audio/webm"});recorder.current=active;active.ondataavailable=event=>{if(event.data.size)chunks.current.push(event.data)};active.onstop=async()=>{recordingRef.current=false;setListening(false);cleanupAnalysis();stream.current?.getTracks().forEach(track=>track.stop());if(cancelledRef.current)return;const audio=new Blob(chunks.current,{type:active.mimeType});if(audio.size<500){setMessages(current=>[...current,{role:"assistant",text:labels.empty}]);if(voiceModeRef.current)setTimeout(()=>void startRecording(),600);return}setLoading(true);try{const form=new FormData();form.set("audio",audio,"question.webm");form.set("language",lang);const response=await fetch(`${api}/v1/households/shared-demo/voice/transcribe`,{method:"POST",body:form});if(!response.ok)throw new Error();const body=await response.json(),transcript=body.data.transcript;if(!transcript)throw new Error();setInput(transcript);setLoading(false);await ask(transcript,"voice")}catch{setLoading(false);setMessages(current=>[...current,{role:"assistant",text:labels.failed}]);voiceModeRef.current=false;setVoiceMode(false)}};recordingRef.current=true;setListening(true);active.start(250);watchForSilence(stream.current,active)}catch{recordingRef.current=false;setListening(false);setMicOpen(true);await loadDevices()}}
-  function toggleRecording(){if(recordingRef.current)recorder.current?.stop();else void startRecording()}
-  function toggleConversation(){if(voiceModeRef.current){voiceModeRef.current=false;setVoiceMode(false);cancelledRef.current=true;if(recordingRef.current)recorder.current?.stop();stream.current?.getTracks().forEach(track=>track.stop());activeAudio.current?.pause();speechSynthesis.cancel();cleanupAnalysis()}else{voiceModeRef.current=true;setVoiceMode(true);void startRecording()}}
-  const suggestions=lang==="de"?["Wie konzentriert ist mein Depot?","Wie hat sich mein Portfolio entwickelt?","Was ist mein größtes finanzielles Risiko?"]:["How concentrated is my portfolio?","How has my portfolio grown?","What is my biggest financial risk?"];
-  return <section className="assistant-page"><div className="assistant-intro"><p className="kicker dark"><Sparkles/>{t.assistantOver}</p><h1>{t.assistantTitle}<br/><em>{t.assistantAccent}</em></h1><p>{t.assistantBlurb}</p><div className={`ai-status ${aiLive?"live":"demo"}`}><span/>{aiLive?t.live:t.offline}</div><div className="voice-quality"><Headphones/><span><strong>{labels.natural}</strong><small>{lang==="de"?"Beste verfügbare deutsche Systemstimme.":"Hannah when available, enhanced system voice as fallback."}</small></span></div></div><div className={`chat-card ${voiceMode?"voice-active":""}`}><div className="chat-top"><span><Bot/>FinTwin</span><div className="chat-tools"><button onClick={()=>{setMicOpen(!micOpen);if(!devices.length)void loadDevices()}} aria-label={t.micSelect}><Settings2/>{t.micSelect}</button><small><ShieldCheck/>{t.protected}</small></div></div>{micOpen&&<div className="mic-panel"><div><strong>{t.micTitle}</strong><p>{t.micHelp}</p></div>{devices.length?<select value={deviceId} onChange={event=>setDeviceId(event.target.value)}>{devices.map((device,index)=><option value={device.deviceId} key={device.deviceId}>{device.label||`${t.micTitle} ${index+1}`}</option>)}</select>:<button onClick={()=>void loadDevices()}>{t.micPermission}</button>}</div>}{voiceMode&&<div className="voice-mode-banner"><span className="voice-wave"><i/><i/><i/><i/><i/></span><div><strong>{listening?labels.listen:loading?(lang==="de"?"Ich denke gerade …":"I’m thinking …"):(lang==="de"?"FinTwin antwortet …":"FinTwin is speaking …")}</strong><small>{labels.natural}</small></div><button onClick={toggleConversation}><X/>{labels.end}</button></div>}<div className="messages" aria-live="polite">{messages.map((message,index)=><div className={`message ${message.role}`} key={`${message.createdAt||"message"}-${index}`}><span>{message.role==="assistant"?<Sparkles/>:account.name.slice(0,2).toUpperCase()}</span><div><p>{message.text}</p>{message.sources&&message.sources.length>0&&<details><summary><Database size={13}/>{message.sources.length} {lang==="de"?"Quellen anzeigen":"sources"}</summary>{message.sources.slice(0,6).map(source=><code key={source}>{source}</code>)}</details>}</div></div>)}{loading&&<div className="typing"><i/><i/><i/></div>}<div ref={messageEnd}/></div><div className="suggestions">{suggestions.map(suggestion=><button key={suggestion} onClick={()=>setInput(suggestion)}>{suggestion}</button>)}</div><button className={`conversation-button ${voiceMode?"active":""}`} onClick={toggleConversation}>{voiceMode?<MicOff/>:<AudioLines/>}<span><strong>{voiceMode?labels.end:labels.conversation}</strong><small>{labels.natural}</small></span><ChevronRight/></button><form className="composer" onSubmit={submit}><button type="button" className={`mic ${listening?"listening":""}`} onClick={toggleRecording} aria-label={listening?t.stopRecording:t.startRecording}>{listening?<MicOff/>:<Mic/>}</button><label><span className="sr-only">{t.question}</span><input value={input} onChange={event=>setInput(event.target.value)} placeholder={listening?t.recording:t.question}/></label><button type="submit" disabled={!input.trim()||loading} aria-label={t.send}><Send/></button></form><p className="voice-note"><Volume2/>{t.voiceHint}<span/><LockKeyhole/>{labels.monitor}</p></div></section>;
-}
-
-function PageHead({overline,title,text}:{overline:string;title:string;text:string}){return <section className="page-head"><p className="kicker dark">{overline}</p><h1>{title}</h1><p>{text}</p></section>}
-function localAnswer(q:string,lang:Lang,account:AccountProfile,profile:Profile):Message{
-  const lower=q.toLowerCase(),portfolio=lower.includes("portfolio")||lower.includes("depot")||lower.includes("concentrat")||lower.includes("divers")||lower.includes("investment")||lower.includes("risiko")||lower.includes("risk");
-  if(portfolio)return{role:"assistant",text:lang==="de"?`Ihr Depot ist mit rund 62 % Technologie recht deutlich auf einen Bereich konzentriert. Die drei größten Positionen – der All-World-ETF, Microsoft und Apple – machen zusammen knapp 68 % aus. Das muss nicht automatisch falsch sein, aber ein Rückgang großer Technologiewerte würde Ihr Depot spürbar gleichzeitig treffen.\n\nFür eine breitere Aufstellung würde ich zuerst prüfen, welche Regionen und Anlageklassen im ETF bereits stecken, bevor Sie etwas verändern. Dann lässt sich sachlich erkennen, ob Ihnen eher andere Branchen, Anleihen, Liquidität oder internationale Märkte fehlen – ohne vorschnell ein einzelnes Produkt zu kaufen.`:`Your portfolio is fairly concentrated: roughly 62% sits in technology. The three largest positions—the global equity ETF, Microsoft and Apple—make up nearly 68%. That is not automatically wrong, but a broad fall in large technology shares would hit several positions at once.\n\nBefore changing anything, I would first look through what regions and sectors the ETF already contains. That shows whether the real gap is another asset class, geography, defensive sector or simply more liquidity—without jumping to a specific product.`,sources:["portfolio_live_value","household_balance_sheet","shared_demo_brokerage"],mode:"fallback"};
-  const million=lower.includes("million")||lower.includes("1.000.000")||lower.includes("1000000");if(million)return{role:"assistant",text:lang==="de"?`${account.name}, Sie sind deutlich näher dran als 71 Jahre. Wenn Ihr heutiges Nettovermögen von ${money(profile.netWorth,lang)} ebenfalls 4 % pro Jahr wächst und Sie monatlich 568 € investieren, läge die Million grob Anfang 2041. Wenn nur die neuen Einzahlungen wachsen und Ihr heutiges Vermögen unverändert bleibt, wäre es eher 2061. Der Unterschied ist wichtig – als Nächstes sollten wir trennen, welcher Teil Ihres Vermögens tatsächlich investierbar ist.`:`${account.name}, you are much closer than 71 years. If your current ${money(profile.netWorth,lang)} also grows at 4% a year and you invest €568 each month, you would reach €1 million around early 2041. If only the new contributions grow while today’s net worth stays flat, it is closer to 2061. That difference matters—next, we should separate the part of your wealth that is actually investable.`,sources:["account_net_worth","goal_projection_4pct","agg_cashflow_202608"],mode:"fallback"};
-  const rate=lower.includes("6")||lower.includes("zins")||lower.includes("rate");if(rate)return{role:"assistant",text:lang==="de"?`${account.name}, bei 240.000 € Restschuld und 20 Jahren läge die Rate bei 6 % bei rund 1.719,43 € im Monat. Das wären etwa 265 € mehr als im 4-%-Szenario. Es ist eine Modellrechnung, kein Kreditangebot – aber sie zeigt gut, wie viel Puffer Sie für die Anschlussfinanzierung brauchen.`:`${account.name}, with €240,000 remaining over 20 years, a 6% rate would mean roughly €1,719.43 a month—about €265 more than the 4% scenario. It is a model calculation, not a loan offer, but it gives you a useful sense of the buffer you may need.`,sources:["scenario_mortgage_6","fact_mortgage_balance"],mode:"fallback"};
-  return{role:"assistant",text:lang==="de"?`${account.name}, im August kamen 7.240 € von außen herein und 6.672 € gingen ab. Damit blieben 568 € frei. Eigene Überträge habe ich herausgerechnet, damit das Bild nicht künstlich aufgebläht wird.`:`${account.name}, €7,240 came in from outside the household in August and €6,672 went out, leaving €568 free. I excluded transfers between your own accounts so the picture is not artificially inflated.`,sources:["agg_cashflow_202608","transfer_matches_202608"],mode:"fallback"};
+    {settingsOpen && <SettingsSheet state={state} lang={lang} theme={theme} onTheme={setTheme} onLanguage={value => void switchLanguage(value)} applyState={applyState} onReset={reset} onClose={() => setSettingsOpen(false)} />}
+    {toast && <div className="toast" role="status">{toast}</div>}
+  </div>;
 }

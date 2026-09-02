@@ -12,3 +12,7 @@ data/generated/
 .DS_Store
 test-results/
 playwright-report/
+
+sites-worker/dist
+data/local.sqlite*
+apps/web/.env.local

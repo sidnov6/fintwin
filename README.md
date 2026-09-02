@@ -1,157 +1,119 @@
+---
+title: FinTwin
+emoji: 💬
+colorFrom: green
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # FinTwin
 
-FinTwin is an independent, synthetic-data interview prototype for holistic household
-financial review and adviser preparation. The repository implements the complete P0–P6
-interview scope: reconciled ledger, versioned Financial Twin, seven-domain Review,
-deterministic scenarios, guarded scripted copilot, printable Adviser Brief, bilingual
-responsive flow, and a feature-flagged education-goal calculator.
+FinTwin is a financial companion you talk to. It remembers what you tell it, works out
+what follows (net worth, cashflow, reserve, mortgage and retirement scenarios), tells you
+plainly what stands out and what it does not know, and lets you correct any fact in place.
 
-It is not a DVAG product, is not affiliated with or endorsed by DVAG, and does not use
-internal DVAG information. It does not provide financial, investment, insurance,
-mortgage, tax, or legal advice.
+It is an independent prototype with no bank, broker or insurer connections. It does not
+provide financial, investment, insurance, tax or legal advice, and it never recommends
+products or executes anything.
 
-## What is included
+## How it works for the person using it
 
-- pnpm workspace with a strict Next.js 15 frontend and shared TypeScript contracts
-- FastAPI/Pydantic/SQLAlchemy composition root managed with `uv`
-- PostgreSQL 16 local service and Alembic migrations for ledger, Twin, findings, scenarios, and audit records
-- seven synthetic accounts and 60 months of coherent Becker household activity
-- 7,666 booked transaction records from seed `20260830`
-- source IDs, balance snapshots, own-transfer matches, reversals, and planted event labels
-- deterministic normalized fixture plus content hash
-- household-scoped reference repository and cross-household non-leakage tests
-- seven-domain Allfinanz Review with evidence, missing facts, neutral wording, and human-review questions
-- provenance-rich Financial Twin correction with proposal, confirmation, optimistic concurrency, audit event, and immutable version increment
-- Decimal-only mortgage and retirement engines with traces, warnings, versions, and property tests
-- guarded scripted copilot covering all eight golden questions without an external model key
-- printable Adviser Brief containing verified facts, selected scenarios, questions, gaps, and disclaimers
-- responsive German-first UI, English golden-path toggle, browser tests, and print stylesheet
-- feature-flagged child education-goal calculator (`ENABLE_CHILD_GOAL=true`)
+1. **The conversation is the product.** A new person is onboarded in the chat, one short
+   question at a time (goal, age, income, spending, cash, investments, property, debt,
+   retirement age). Every answer becomes a fact and appears immediately in the picture
+   rail. Anything can be skipped, and "load sample data" fills a clearly labelled
+   synthetic household so the whole app can be explored in one tap.
+2. **Every number is derived, never invented.** Facts live in a typed registry
+   (`packages/engine`). The engine derives the picture, runs deterministic mortgage,
+   retirement and goal calculations, produces neutral insights and ranks the open
+   questions by how much they would change the picture.
+3. **The assistant acts through tools.** Whether the live model or the offline companion
+   is answering, it stores facts, runs scenarios, saves memories and next steps through
+   the same tool layer. Results appear as cards inside the thread and the picture updates
+   live over the same stream.
+4. **The picture is editable.** Any fact can be edited or removed on the Picture screen;
+   the edit shows up in the thread so the conversation and the data never diverge.
+5. **What-if planning is instant.** The Plan screen runs the same engine client-side with
+   sliders, and any scenario can be handed to the conversation in one click.
+6. **Voice.** Speech input uses the browser's recogniser (live interim text) with a
+   server transcription fallback; replies are spoken sentence by sentence as they stream
+   and stop when you start talking. Hands-free mode keeps listening after each answer.
+7. **German and English** are both first-class in the UI, the engine and the companion.
 
 ## Architecture
 
 ```text
-apps/web (Next.js 15)
-    │ typed JSON envelope
-    ▼
-services/api (FastAPI)
-    ├── household-scoped repository boundary
-    ├── deterministic synthetic generator
-    ├── reconciliation + versioned Twin services
-    ├── Decimal-only finance engine
-    ├── needs-review rules + policy gate
-    └── scripted copilot + Adviser Brief contract
-           │
-           ▼
-PostgreSQL 16 / NUMERIC money
-
-packages/contracts ─ shared API types + OpenAPI snapshot
-packages/ui        ─ shared design tokens
-data/generated     ─ reproducible local fixture (ignored; regenerate anytime)
+apps/web (Next.js 15, static export)
+  ├── Chat            streaming thread, cards, composer, voice
+  ├── Picture         rail + full editable fact view, sample portfolio
+  └── Plan            client-side what-if with the shared engine
+        │  JSON + server-sent events
+        ▼
+sites-worker/src (TypeScript, bundled with esbuild)
+  ├── index.ts        routes, viewer identity, CORS for local dev
+  ├── chat.ts         POST /v1/chat: live model loop (Groq, tools, streaming) or companion
+  ├── companion.ts    deterministic conversation engine (onboarding, intents, answers)
+  ├── tools.ts        set_facts, run_mortgage, run_retirement, run_goal, get_portfolio, ...
+  ├── state.ts        assembles profile + facts + picture + sample portfolio quotes
+  └── db.ts           per-user tables on the D1-style SQLite binding
+packages/engine       facts registry, picture derivation, calculators, parsing (pure)
+packages/contracts    API and event types shared by worker and web
+services/api          earlier FastAPI reference implementation of the spec (unchanged)
 ```
 
-## Prerequisites
+Without a model key the offline companion answers everything; with `GROQ_API_KEY` set the
+live model (`openai/gpt-oss-120b` by default) answers with the same tools and falls back to
+the companion if it fails.
 
-- Node.js 20 or newer
-- pnpm 11
-- Python 3.12 or newer and `uv`
-- Docker with Compose for the PostgreSQL-backed local runtime
-
-## Setup
+## Run locally
 
 ```bash
-cp .env.example .env
-make install
-docker compose up -d postgres
-uv run --project services/api alembic -c services/api/alembic.ini upgrade head
-make seed
+pnpm install
+pnpm dev:all        # API on :8787 (SQLite in ./data/local.sqlite) + web on :3000
 ```
 
-`make seed` is deterministic and writes `data/generated/becker.json`. Override the seed
-with `FINTWIN_SEED=1234 make seed`.
+Or in two terminals: `pnpm dev:api` and `pnpm dev`. The local API injects a signed-in
+viewer (`FINTWIN_VIEWER`, default `local-dev-user`); in production the hosting platform
+sets the `oai-authenticated-*` headers. Set `GROQ_API_KEY` in the environment to use the
+live model and server voice.
 
-## Run
+## Host it
 
-Start PostgreSQL, migrate, seed, and run both services with one command:
+The `Dockerfile` runs the same Node server that serves the static app and the API on one
+origin (port 7860), with a per-browser cookie as identity and SQLite under `/data`. It is
+what the Hugging Face Space uses; set `GROQ_API_KEY` as a secret there for the live model.
+Storage on a free Space is ephemeral, so conversations reset when the Space restarts.
 
-```bash
-make demo
-```
-
-For separate terminals, use `make api` and `make web` after setup.
-
-Open `http://localhost:3000`. The API health endpoint is
-`http://localhost:8000/health` and the scoped overview endpoint is
-`http://localhost:8000/v1/demo/households/hh_becker/overview`.
-
-## Reset
+## Check
 
 ```bash
-make reset
-```
-
-This regenerates the canonical fixture with `FINTWIN_SEED` (default `20260830`). To reset
-PostgreSQL as well:
-
-```bash
-docker compose down -v
-docker compose up -d postgres
-uv run --project services/api alembic -c services/api/alembic.ini upgrade head
-make seed
-```
-
-## Test and validate
-
-```bash
-make test
-make test-e2e
-make build
+pnpm typecheck        # web + worker
 pnpm lint
+pnpm test:worker      # engine goldens and full offline conversations against SQLite
+pnpm test:e2e         # Playwright: onboarding, editing, scenarios, German, boundaries
+pnpm build            # static export
+pnpm build:site       # dist/ with client assets + bundled worker for deployment
 ```
 
-The test suite proves:
+## API
 
-1. all 420 seeded account-months reconcile to €0.01;
-2. every matched own transfer sums to €0.00 and is excluded from spend;
-3. every planted reversal pair nets to €0.00;
-4. promotion, annual bonus, recurring-cost drift, mortgage horizon, and reversal labels exist;
-5. the same seed produces byte-equivalent normalized fixtures; and
-6. an unknown or mismatched household scope returns no count, identifier, or content.
-7. Twin corrections require confirmation, reject stale versions, and create versioned facts;
-8. mortgage golden cases and mortgage/retirement monotonicity invariants hold;
-9. personalized copilot claims carry source IDs and blocked intents refuse safely;
-10. all seven Review domains are represented without a gamified score; and
-11. the German golden browser path and English Adviser Brief smoke flow complete.
+| Method | Route | Purpose |
+| --- | --- | --- |
+| GET | `/v1/state` | profile, facts, derived picture, sample portfolio, next steps, memories |
+| GET | `/v1/messages` | conversation history (adds a greeting when the thread is stale) |
+| POST | `/v1/chat` | one turn, streamed as `start`, `delta`, `card`, `state`, `done` events |
+| PATCH / DELETE | `/v1/facts` | edit or remove facts directly |
+| PATCH | `/v1/profile` | name, language, voice autoplay |
+| POST | `/v1/sample` | load the synthetic sample household |
+| POST/PATCH/DELETE | `/v1/next-steps` | agreed actions |
+| POST | `/v1/reset` | delete everything for the signed-in person |
+| POST | `/v1/voice/transcribe`, `/v1/voice/synthesize` | speech in / out |
 
-## Contract refresh
+## Boundaries
 
-The API is the OpenAPI authority. Refresh the checked snapshot after route or schema work:
-
-```bash
-uv run --project services/api python services/api/scripts/export_openapi.py
-```
-
-## Seven-minute interview path
-
-1. Open Overview and point out the independent-prototype and synthetic-data boundaries.
-2. Open cashflow evidence and show transfer/reversal handling.
-3. Open Twin, correct the inferred retirement age, and confirm Twin v18.
-4. Compare the 4%, 5%, and 6% mortgage refix results and formula trace.
-5. Open the retirement baseline and compare the age sensitivity.
-6. Ask a golden question, then request a product recommendation to show the policy refusal.
-7. Open the Adviser Brief and print or save it as PDF.
-
-## Boundaries and limitations
-
-- All data is synthetic and the seeded scenario is deliberately deterministic.
-- No real account connection, OCR, product catalogue, quote, recommendation, suitability
-  decision, tax/legal conclusion, application, trade, underwriting, or execution exists.
-- The copilot is a transparent scripted fallback for the golden path; an external LLM is
-  optional future enrichment and may never become the ledger or calculator.
-- The education-goal calculator is a P6 beta behind a feature flag and does not alter the
-  core Review or advice boundary.
-
-The public-category and coaching-journey mapping in the source specification references
-[DVAG’s public product overview](https://www.dvag.de/dvag/allfinanzberatung/produkte.html)
-and [public financial-coaching page](https://www.dvag.de/dvag/finanzcoaching.html), retrieved
-30 August 2026. Those links support high-level alignment only.
+The companion explains criteria and prepares questions; it does not pick products, rank
+providers, execute trades, promise returns or give binding tax, legal or credit
+conclusions. Sample data is synthetic and always labelled. Model results are labelled as
+model calculations, not forecasts.
