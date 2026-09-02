@@ -4,8 +4,9 @@
   "packageManager": "pnpm@11.19.0",
   "scripts": {
     "dev": "pnpm --filter @fintwin/web dev",
-    "build": "pnpm --filter @fintwin/web build",
-    "build:site": "pnpm build && bash scripts/build-sites.sh",
+    "build:web": "corepack pnpm --filter @fintwin/web build",
+    "build": "corepack pnpm run build:web && bash scripts/build-sites.sh",
+    "build:site": "corepack pnpm run build",
     "lint": "pnpm --filter @fintwin/web lint",
     "typecheck": "pnpm --filter @fintwin/web typecheck && pnpm typecheck:worker",
     "test:web": "pnpm --filter @fintwin/web test",

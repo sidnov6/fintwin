@@ -93,8 +93,9 @@ pnpm typecheck        # web + worker
 pnpm lint
 pnpm test:worker      # engine goldens and full offline conversations against SQLite
 pnpm test:e2e         # Playwright: onboarding, editing, scenarios, German, boundaries
-pnpm build            # static export
-pnpm build:site       # dist/ with client assets + bundled worker for deployment
+pnpm build:web        # static web export only
+pnpm build            # deployable dist/ with client assets + bundled worker
+pnpm build:site       # alias for the deployable build
 ```
 
 ## API
