@@ -7,6 +7,7 @@ import { derivePicture, SAMPLE_HOLDINGS, SAMPLE_QUOTES } from "@fintwin/engine";
 import type { Facts, PortfolioSummary } from "@fintwin/engine";
 import type { AppState, Portfolio, PortfolioHolding } from "@fintwin/contracts";
 import { getFacts, getProfile, listMemories, listNextSteps, type Env } from "./db";
+import { chatProvider, speechInProvider, speechOutProvider } from "./providers";
 
 interface Quote { symbol: string; price: number; currency: string; oneYearChangePct: number; source: "market" | "snapshot"; asOf: string }
 const quoteCache = new Map<string, { value: Quote; cachedAt: number }>();
@@ -67,7 +68,13 @@ export function portfolioSummary(portfolio: Portfolio | null): PortfolioSummary 
 }
 
 export function aiInfo(env: Env): AppState["ai"] {
-  return { live: Boolean(env.GROQ_API_KEY), provider: env.GROQ_API_KEY ? "groq" : "offline", model: env.GROQ_CHAT_MODEL || "openai/gpt-oss-120b", voice: Boolean(env.GROQ_API_KEY) };
+  const chat = chatProvider(env), speechIn = speechInProvider(env), speechOut = speechOutProvider(env);
+  return {
+    live: Boolean(chat), provider: chat?.id ?? "offline", model: chat?.model ?? "", reasoning: chat?.reasoningEffort ?? null,
+    voice: speechOut.id !== "none",
+    speechIn: { provider: speechIn.id, model: speechIn.model },
+    speechOut: { provider: speechOut.id, voice: speechOut.voice, maxChars: speechOut.maxChars, multilingual: speechOut.languages === "multilingual" },
+  };
 }
 
 export async function buildState(env: Env, userId: string, options: { facts?: Facts; skipPortfolio?: boolean } = {}): Promise<AppState> {

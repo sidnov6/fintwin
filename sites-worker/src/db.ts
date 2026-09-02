@@ -17,10 +17,22 @@ export interface D1Database { prepare(sql: string): D1PreparedStatement; batch(s
 export interface Env {
   DB?: D1Database;
   ASSETS?: { fetch(request: Request): Promise<Response> };
+  // Chat: Groq by default, or any OpenAI-compatible endpoint via LLM_*.
   GROQ_API_KEY?: string;
   GROQ_CHAT_MODEL?: string;
+  LLM_BASE_URL?: string;
+  LLM_API_KEY?: string;
+  LLM_MODEL?: string;
+  LLM_REASONING_EFFORT?: string;
+  LLM_MAX_TOKENS?: string;
+  // Speech in / out.
+  GROQ_STT_MODEL?: string;
   GROQ_TTS_MODEL?: string;
   GROQ_TTS_VOICE?: string;
+  ELEVENLABS_API_KEY?: string;
+  ELEVENLABS_STT_MODEL?: string;
+  ELEVENLABS_TTS_MODEL?: string;
+  ELEVENLABS_VOICE_ID?: string;
 }
 
 const SCHEMA = [

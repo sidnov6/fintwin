@@ -11,7 +11,8 @@ import type { AppState, Card, ChatEvent, Message } from "@fintwin/contracts";
 import { listMessages, saveMessage, type Env } from "./db";
 import { buildState } from "./state";
 import { companionTurn, firstRead, insightSuggestions, prestore } from "./companion";
-import { groqFetch } from "./groq";
+import { apiFetch } from "./groq";
+import { chatProvider } from "./providers";
 import { runToolAndRefresh, TOOL_DEFS, type ToolContext } from "./tools";
 
 const POLICY = /\b(best(es|e)? (produkt|etf|fonds|aktie|investment|fund|stock)|buy for me|kauf(e|en)? für mich|execute (a )?trade|trade ausführen|guaranteed return|garantierte rendite|steuerlich verbindlich|kredit genehmigen)\b/i;
@@ -60,9 +61,13 @@ function systemPrompt(state: AppState, lang: Lang, now: Date, turn: { introduced
 Today: ${now.toISOString().slice(0, 10)}.
 
 HOW YOU TALK
-- Lead with what the person actually needs. One to three short paragraphs, plain prose. No markdown, headings, bullet lists, tables or emojis. Usually under 110 words; go longer only when asked for detail.
+- Lead with what the person actually needs. Plain prose in short paragraphs. No markdown, headings, bullet lists, tables or emojis.
+- Match length to the question. A number they asked for takes two sentences. A decision they are weighing deserves the trade-off, what would change your view, and what you would want to know next. Do not pad, and do not truncate something that matters.
+- Think about second-order effects before you answer: what this number implies for their other goals, which assumption the result is most sensitive to, and what they have not thought to ask. Say the uncomfortable thing plainly if it is true.
 - Ask at most one question per reply. Reflect briefly on what a new number means before moving on.
 - Every personal number comes from FACTS, DERIVED or a tool result. If something is unknown, say so and ask; never invent or estimate silently. Label model results as model calculations, not forecasts.
+- Prefer running a scenario over describing one. If the answer depends on a number you can compute, compute it, then interpret it. Interpretation is the part they cannot get elsewhere.
+- Never do arithmetic yourself. Interest saved, growth over time, totals and differences all come from a tool; if you need one, call the tool with the right arguments (for example special_repayment_monthly when they ask about overpaying) instead of estimating. Quote tool numbers exactly as returned. If no tool can produce a figure, say what is missing rather than approximating.
 - When the person states or corrects a number, call set_facts immediately with every fact in the message (EUR, monthly for monthly keys; keys: ${factKeys}; "retire at 60" means retirement_age=60). When they ask "what if", call the matching scenario tool with overrides and explain the result in words; a what-if is not a new fact unless they say it is. Use remember for preferences and worries that are not numbers. Use add_next_step when you agree on a concrete action.
 - First conversation (onboardingDone=false): ${turn.introduced ? "You have already introduced yourself and asked for a name; never introduce yourself again." : "Introduce yourself in one short sentence and ask for a name."} Walk through the open questions one at a time in a light, human way, acknowledging each answer with one short reflection. Let them skip. Offer load_sample_data if they would rather explore first. Call finish_onboarding once the basics (income, spending, cash, investments, age, main goal) are covered or they want to move on, then give a short honest first read of their picture.
 - Never ask the person to confirm a number they just gave. Facts the server already stored from this message are listed under STORED THIS TURN: treat them as done, reflect briefly, move on. If a name is stored, use it and do not ask for it again.
@@ -89,7 +94,13 @@ interface ToolCallAccumulator { id: string; name: string; arguments: string }
 
 /** Streams one model round; returns text and any tool calls. */
 async function streamRound(env: Env, messages: unknown[], onDelta: (text: string) => void): Promise<{ text: string; toolCalls: ToolCallAccumulator[]; finish: string }> {
-  const response = await groqFetch("/chat/completions", env, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: env.GROQ_CHAT_MODEL || "openai/gpt-oss-120b", messages, tools: TOOL_DEFS, tool_choice: "auto", temperature: 0.55, max_tokens: 900, stream: true }) });
+  const provider = chatProvider(env);
+  if (!provider) throw new Error("No chat provider is configured.");
+  const payload: Record<string, unknown> = { model: provider.model, messages, tools: TOOL_DEFS, tool_choice: "auto", temperature: 0.5, max_tokens: provider.maxTokens, stream: true };
+  // Reasoning tokens count against max_tokens, so the budget above is sized for them.
+  // reasoning_format must be parsed or hidden alongside tool calling, never raw.
+  if (provider.reasoningEffort) { payload.reasoning_effort = provider.reasoningEffort; payload.reasoning_format = "hidden"; }
+  const response = await apiFetch(`${provider.baseUrl}/chat/completions`, provider.apiKey, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
   const reader = response.body?.getReader();
   if (!reader) throw new Error("No stream from model.");
   const decoder = new TextDecoder();
@@ -151,7 +162,7 @@ async function liveTurn(text: string, ctx: ToolContext, history: Message[], writ
   const storedNote = [pre.name ? `name=${pre.name}` : "", ...pre.stored.map(item => `${item.key}=${JSON.stringify(item.value)}`)].filter(Boolean).join(", ");
   const turn = { introduced: history.some(message => message.role === "assistant"), stored: storedNote, skipped: pre.skipped };
   const messages: unknown[] = [{ role: "system", content: systemPrompt(ctx.state, ctx.lang, ctx.now, turn) }];
-  for (const message of history.slice(-8)) if (message.role !== "system" && message.text) messages.push({ role: message.role, content: message.text.slice(0, 1200) });
+  for (const message of history.slice(-20)) if (message.role !== "system" && message.text) messages.push({ role: message.role, content: message.text.slice(0, 4000) });
   messages.push({ role: "user", content: text });
   let visible = "", finalText = "";
   for (let round = 0; round < 4; round++) {

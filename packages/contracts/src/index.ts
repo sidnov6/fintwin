@@ -41,7 +41,11 @@ export interface AppState {
   portfolio: Portfolio | null;
   nextSteps: NextStep[];
   memories: Memory[];
-  ai: { live: boolean; provider: string; model: string; voice: boolean };
+  ai: {
+    live: boolean; provider: string; model: string; reasoning: string | null; voice: boolean;
+    speechIn: { provider: string; model: string };
+    speechOut: { provider: string; voice: string; maxChars: number; multilingual: boolean };
+  };
   serverTime: string;
 }
 

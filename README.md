@@ -63,9 +63,28 @@ packages/contracts    API and event types shared by worker and web
 services/api          earlier FastAPI reference implementation of the spec (unchanged)
 ```
 
-Without a model key the offline companion answers everything; with `GROQ_API_KEY` set the
-live model (`openai/gpt-oss-120b` by default) answers with the same tools and falls back to
-the companion if it fails.
+Without a model key the offline companion answers everything; with a key set the live model
+answers with the same tools and falls back to the companion if it fails.
+
+## Providers
+
+No single vendor is best at thinking, hearing and speaking, so each layer is chosen
+separately and degrades to the next option when a key is absent.
+
+| Layer | Preferred | Falls back to | Settings |
+| --- | --- | --- | --- |
+| Chat | any OpenAI-compatible endpoint | Groq | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_REASONING_EFFORT`, `LLM_MAX_TOKENS` |
+| Speech in | ElevenLabs Scribe | Groq Whisper large-v3, then browser | `ELEVENLABS_API_KEY`, `ELEVENLABS_STT_MODEL`, `GROQ_STT_MODEL` |
+| Speech out | ElevenLabs (multilingual) | Groq Orpheus (English only), then browser | `ELEVENLABS_API_KEY`, `ELEVENLABS_TTS_MODEL`, `ELEVENLABS_VOICE_ID` |
+
+`LLM_REASONING_EFFORT` accepts `low`, `medium` or `high` on models that support it
+(`gpt-oss`, `qwen3.6`, `qwen3.8`). Reasoning tokens are billed against `max_tokens`, so the
+budget is raised automatically with the effort level; setting `LLM_MAX_TOKENS` too low
+returns empty replies.
+
+Speech out is chunked to whatever the provider accepts, and the next chunk is fetched while
+the current one plays, so long answers are spoken without gaps. German has no Groq voice, so
+German speech uses the browser voice unless an ElevenLabs key is present.
 
 ## Run locally
 
@@ -111,6 +130,7 @@ pnpm build:site       # alias for the deployable build
 | POST/PATCH/DELETE | `/v1/next-steps` | agreed actions |
 | POST | `/v1/reset` | delete everything for the signed-in person |
 | POST | `/v1/voice/transcribe`, `/v1/voice/synthesize` | speech in / out |
+| GET | `/health` | which provider serves each layer, and whether the model is live |
 
 ## Boundaries
 

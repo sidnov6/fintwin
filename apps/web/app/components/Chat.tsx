@@ -38,7 +38,7 @@ export function Chat({ state, lang, messages, setMessages, applyState, registerS
   const busy = useRef(false);
 
   const voiceOn = state.profile?.voiceAutoplay ?? true;
-  const speaker = useSpeaker(lang, voiceOn, state.ai.voice);
+  const speaker = useSpeaker(lang, { enabled: voiceOn, serverVoice: state.ai.voice && (state.ai.speechOut.multilingual || lang === "en"), maxChars: state.ai.speechOut.maxChars });
   const { speaking, feed, flush, stop: stopSpeaking, setOnIdle } = speaker;
 
   const send = useCallback((text: string, mode: "text" | "voice" = "text") => {
@@ -71,6 +71,7 @@ export function Chat({ state, lang, messages, setMessages, applyState, registerS
 
   const speech = useSpeechInput({
     lang,
+    serverTranscription: state.ai.speechIn.provider !== "none",
     onInterim: setInterim,
     onSpeechStart: () => stopSpeaking(),
     onFinal: text => { setInterim(""); send(text, "voice"); },
@@ -117,12 +118,12 @@ export function Chat({ state, lang, messages, setMessages, applyState, registerS
     </div>
 
     <div className="composer-wrap">
-      {handsFree && <div className={`voice-banner ${speech.listening ? "" : "quiet"}`}><span className="wave" aria-hidden><i /><i /><i /><i /><i /></span>
+      {handsFree && <div className={`voice-banner ${speech.listening ? "" : "quiet"}`}><span className="wave" aria-hidden>{[0, 1, 2, 3, 4].map(index => <i key={index} style={speech.listening ? { height: `${5 + Math.min(13, speech.level * 30 * (index === 2 ? 1.3 : index === 1 || index === 3 ? 1 : 0.7))}px`, animation: "none" } : undefined} />)}</span>
         <span>{speech.listening ? t.listening : speaking ? t.speaking : t.thinking}{interim ? ` — ${interim}` : ""}</span>
         <button onClick={toggleHandsFree}>{t.handsFreeOn}</button></div>}
       {suggestions.length > 0 && <div className="suggestions">{suggestions.map(suggestion => <button key={suggestion} onClick={() => send(suggestion)}>{suggestion}</button>)}</div>}
       <form className="composer" onSubmit={event => { event.preventDefault(); send(input); }}>
-        <button type="button" className={`icon-btn mic ${speech.listening ? "on" : ""}`} onClick={() => speech.listening ? speech.stop() : void speech.start()} aria-label={speech.listening ? t.stopMic : t.mic} disabled={!canSpeak}>{speech.listening ? <MicOff /> : <Mic />}</button>
+        <button type="button" className={`icon-btn mic ${speech.listening ? "on" : ""}`} style={speech.listening ? { boxShadow: `0 0 0 ${2 + speech.level * 10}px color-mix(in srgb, var(--red) ${12 + speech.level * 26}%, transparent)` } : undefined} onClick={() => speech.listening ? speech.stop() : void speech.start()} aria-label={speech.listening ? t.stopMic : t.mic} disabled={!canSpeak}>{speech.listening ? <MicOff /> : <Mic />}</button>
         <textarea ref={textarea} rows={1} value={speech.listening && interim ? interim : input} onChange={event => setInput(event.target.value)} placeholder={speech.listening ? t.listening : t.placeholder} aria-label={t.placeholder}
           onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(input); } }} />
         {thinking || live || speaking ? <button type="button" className="icon-btn send stop" onClick={stopEverything} aria-label={t.stopSpeaking}><Square /></button>

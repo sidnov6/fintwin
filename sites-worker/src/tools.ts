@@ -25,7 +25,7 @@ export const TOOL_DEFS = [
   { type: "function", function: { name: "set_facts", description: "Store facts the person just told you (amounts in EUR, monthly where the key says monthly). Call this as soon as they state or correct a number. Keys: " + Object.keys(FACT_BY_KEY).join(", ") + ". income_protection is one of yes|no|unknown. mortgage_fixed_until is YYYY-MM.",
     parameters: { type: "object", properties: { facts: { type: "array", items: { type: "object", properties: { key: { type: "string" }, value: { type: ["number", "string"] }, note: { type: "string" } }, required: ["key", "value"] } } }, required: ["facts"] } } },
   { type: "function", function: { name: "set_name", description: "Store what the person wants to be called.", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } } },
-  { type: "function", function: { name: "run_mortgage", description: "Deterministic mortgage payment scenario. Defaults come from stored facts. Returns payments at 4/5/6% plus any given rate.", parameters: { type: "object", properties: { principal: { type: "number" }, rate_pct: { type: "number" }, months: { type: "number" }, special_repayment_monthly: { type: "number" } } } } },
+  { type: "function", function: { name: "run_mortgage", description: "Deterministic mortgage payment scenario. Defaults come from stored facts. Returns payments at 4/5/6% plus any given rate. Pass special_repayment_monthly whenever the person asks about overpaying, and the result then includes the exact interest and time saved.", parameters: { type: "object", properties: { principal: { type: "number" }, rate_pct: { type: "number" }, months: { type: "number" }, special_repayment_monthly: { type: "number" } } } } },
   { type: "function", function: { name: "run_retirement", description: "Deterministic retirement baseline in today's euros using stored facts with optional overrides.", parameters: { type: "object", properties: { retirement_age: { type: "number" }, monthly_contribution: { type: "number" }, spending_monthly: { type: "number" }, pension_monthly: { type: "number" }, annual_return_pct: { type: "number" } } } } },
   { type: "function", function: { name: "run_goal", description: "When would cash plus investments reach a target amount, given monthly investing and a return assumption (default 4%).", parameters: { type: "object", properties: { target_amount: { type: "number" }, monthly: { type: "number" }, annual_return_pct: { type: "number" }, label: { type: "string" } }, required: ["target_amount"] } } },
   { type: "function", function: { name: "get_portfolio", description: "Returns the connected sample brokerage holdings, sectors and concentration if sample data is loaded.", parameters: { type: "object", properties: {} } } },
@@ -69,7 +69,25 @@ export async function runTool(name: string, rawArgs: unknown, ctx: ToolContext):
       const currentPayment = factNumber(facts, "mortgage_payment_monthly");
       ctx.emitCard({ type: "mortgage", result, principal, months, currentPayment });
       await saveScenarioRun(ctx.env, ctx.userId, "mortgage", { principal, months, special, rates }, result);
-      return { result: { principal, months, special_repayment_monthly: special, current_payment: currentPayment, scenarios: result.map(item => ({ rate_pct: item.annualRatePct, monthly_payment: item.payment, total_interest: item.totalInterest })), note: "Planning model, not a lender quote. Assumed 20-year term when unknown." }, changed: false };
+      // With an overpayment, also return the no-overpayment baseline so the saving is a
+      // computed figure rather than something the model has to estimate.
+      const overpayment = special > 0 ? rates.map(rate => {
+        const base = mortgage(principal, rate, months, 0), fast = mortgage(principal, rate, months, special);
+        return {
+          rate_pct: rate,
+          interest_without_overpayment: base.totalInterest,
+          interest_with_overpayment: fast.totalInterest,
+          interest_saved: Math.round((base.totalInterest - fast.totalInterest) * 100) / 100,
+          months_saved: base.payoffMonths - fast.payoffMonths,
+          paid_off_after_months: fast.payoffMonths,
+        };
+      }) : null;
+      return { result: {
+        principal, months, special_repayment_monthly: special, current_payment: currentPayment,
+        scenarios: result.map(item => ({ rate_pct: item.annualRatePct, monthly_payment: item.payment, total_interest: item.totalInterest, payoff_months: item.payoffMonths })),
+        overpayment_effect: overpayment,
+        note: "Planning model, not a lender quote. Assumed 20-year term when unknown. Every figure here is computed; do not restate it with a different number.",
+      }, changed: false };
     }
     case "run_retirement": {
       const age = factNumber(facts, "age"), retirementAge = num(args.retirement_age) ?? factNumber(facts, "retirement_age");

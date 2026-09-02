@@ -66,7 +66,15 @@ const assets = {
   },
 };
 
-const env = { DB: d1(database), ASSETS: assets, GROQ_API_KEY: process.env.GROQ_API_KEY, GROQ_CHAT_MODEL: process.env.GROQ_CHAT_MODEL, GROQ_TTS_MODEL: process.env.GROQ_TTS_MODEL, GROQ_TTS_VOICE: process.env.GROQ_TTS_VOICE };
+// Every provider setting the worker understands, passed straight through.
+const PROVIDER_VARS = [
+  "GROQ_API_KEY", "GROQ_CHAT_MODEL", "GROQ_STT_MODEL", "GROQ_TTS_MODEL", "GROQ_TTS_VOICE",
+  "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_REASONING_EFFORT", "LLM_MAX_TOKENS",
+  "ELEVENLABS_API_KEY", "ELEVENLABS_STT_MODEL", "ELEVENLABS_TTS_MODEL", "ELEVENLABS_VOICE_ID",
+];
+const env = { DB: d1(database), ASSETS: assets };
+// FINTWIN_NO_PROVIDERS forces the deterministic companion, which the browser tests rely on.
+if (!process.env.FINTWIN_NO_PROVIDERS) for (const key of PROVIDER_VARS) if (process.env[key]) env[key] = process.env[key];
 
 const bundle = await bundleWorker(join(root, "sites-worker", "dist", "index.mjs"));
 const worker = (await import(`${pathToFileURL(bundle).href}?t=${Date.now()}`)).default;

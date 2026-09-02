@@ -143,7 +143,7 @@ a { color: inherit; }
 .composer:focus-within { border-color: var(--accent); }
 .composer textarea { border: 0; background: transparent; resize: none; padding: 9px 6px; line-height: 1.45; max-height: 160px; outline: none; font-size: 15px; }
 .composer textarea::placeholder { color: var(--text-2); }
-.composer .icon-btn.mic.on { background: var(--red-soft); color: var(--red); animation: pulse-ring 1.2s infinite; }
+.composer .icon-btn.mic.on { background: var(--red-soft); color: var(--red); transition: box-shadow .08s linear; }
 @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 40%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
 .composer .send { background: var(--accent); color: #fff; }
 .composer .send:hover { background: var(--accent-ink); }
