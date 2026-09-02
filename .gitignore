@@ -9,6 +9,7 @@ __pycache__/
 .env
 data/generated/
 *.pyc
+*.tsbuildinfo
 .DS_Store
 test-results/
 playwright-report/
