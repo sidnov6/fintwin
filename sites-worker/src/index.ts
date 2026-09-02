@@ -13,12 +13,15 @@ import { isFactKey } from "@fintwin/engine";
 interface Viewer { userId: string; email: string; fullName: string }
 
 function viewerFromRequest(request: Request): Viewer | null {
-  const userId = request.headers.get("oai-authenticated-user-id");
+  const platformId = request.headers.get("oai-authenticated-user-id");
+  // The platform's signed-in user always wins; a device id is only a fallback.
+  const device = request.headers.get("x-fintwin-device");
+  const userId = platformId || (device && /^[a-f0-9-]{36}$/.test(device) ? `device:${device}` : null);
   const email = request.headers.get("oai-authenticated-user-email") || "";
   let fullName = "";
   const encoded = request.headers.get("oai-authenticated-user-full-name");
   if (encoded && request.headers.get("oai-authenticated-user-full-name-encoding") === "percent-encoded-utf-8") try { fullName = decodeURIComponent(encoded); } catch { fullName = ""; }
-  return userId ? { userId, email, fullName } : null;
+  return userId ? { userId, email: platformId ? email : "", fullName: platformId ? fullName : "" } : null;
 }
 
 function json(data: unknown, status = 200, extra: Record<string, string> = {}): Response {
@@ -28,7 +31,7 @@ function json(data: unknown, status = 200, extra: Record<string, string> = {}): 
 function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("origin") || "";
   if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return {};
-  return { "access-control-allow-origin": origin, "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS", "access-control-allow-headers": "content-type,oai-authenticated-user-id,oai-authenticated-user-email", "access-control-allow-credentials": "true", vary: "origin" };
+  return { "access-control-allow-origin": origin, "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS", "access-control-allow-headers": "content-type,x-fintwin-device,oai-authenticated-user-id,oai-authenticated-user-email", "access-control-allow-credentials": "true", vary: "origin" };
 }
 
 function withCors(response: Response, request: Request): Response {

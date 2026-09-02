@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Lang } from "@fintwin/contracts";
-import { API } from "./api";
+import { API, authHeaders } from "./api";
 
 type RecognitionResultEvent = { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> };
 interface Recognition { lang: string; continuous: boolean; interimResults: boolean; start(): void; stop(): void; abort(): void; onresult: ((event: RecognitionResultEvent) => void) | null; onend: (() => void) | null; onerror: ((event: { error: string }) => void) | null; onspeechstart: (() => void) | null }
@@ -182,7 +182,7 @@ export function useSpeechInput({ lang, serverTranscription, onInterim, onFinal, 
         const form = new FormData();
         form.set("audio", blob, mimeType.includes("mp4") ? "question.mp4" : "question.webm");
         form.set("language", lang);
-        const response = await fetch(`${API}/v1/voice/transcribe`, { method: "POST", body: form, credentials: "include" });
+        const response = await fetch(`${API}/v1/voice/transcribe`, { method: "POST", headers: authHeaders(), body: form, credentials: "include" });
         if (!response.ok) throw new Error("transcription failed");
         const body = await response.json() as { data?: { transcript?: string } };
         const transcript = body.data?.transcript?.trim();
@@ -307,7 +307,7 @@ export function useSpeaker(lang: Lang, { enabled, serverVoice, maxChars }: Speak
   const fetchAudio = useCallback(async (text: string): Promise<Blob | null> => {
     if (!serverVoice || serverWorks.current === false) return null;
     try {
-      const response = await fetch(`${API}/v1/voice/synthesize`, { method: "POST", headers: { "content-type": "application/json" }, credentials: "include", body: JSON.stringify({ text, language: lang }) });
+      const response = await fetch(`${API}/v1/voice/synthesize`, { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, credentials: "include", body: JSON.stringify({ text, language: lang }) });
       if (!response.ok) { if (response.status === 422) serverWorks.current = false; return null; }
       serverWorks.current = true;
       return await response.blob();

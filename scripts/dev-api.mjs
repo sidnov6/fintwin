@@ -90,10 +90,16 @@ const server = createServer(async (req, res) => {
   let setCookie = null;
   if (!headers.has("oai-authenticated-user-id")) {
     if (cookieIdentity) {
-      const cookies = Object.fromEntries((req.headers.cookie || "").split(";").map(part => part.trim().split("=")).filter(pair => pair.length === 2));
-      let id = cookies.fintwin_viewer;
-      if (!id || !/^[a-f0-9-]{36}$/.test(id)) { id = crypto.randomUUID(); setCookie = `fintwin_viewer=${id}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly`; }
-      headers.set("oai-authenticated-user-id", id);
+      // The browser's own device id is authoritative when present: cookies are
+      // blocked whenever the app is embedded in an iframe, and a fresh cookie per
+      // request would make every turn look like a different person.
+      const device = headers.get("x-fintwin-device");
+      if (!(device && /^[a-f0-9-]{36}$/.test(device))) {
+        const cookies = Object.fromEntries((req.headers.cookie || "").split(";").map(part => part.trim().split("=")).filter(pair => pair.length === 2));
+        let id = cookies.fintwin_viewer;
+        if (!id || !/^[a-f0-9-]{36}$/.test(id)) { id = crypto.randomUUID(); setCookie = `fintwin_viewer=${id}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly`; }
+        headers.set("x-fintwin-device", id);
+      }
     } else { headers.set("oai-authenticated-user-id", viewerId); headers.set("oai-authenticated-user-email", `${viewerId}@example.local`); }
   }
   const request = new Request(`http://localhost:${port}${req.url}`, { method: req.method, headers, body: ["GET", "HEAD"].includes(req.method) ? undefined : body });
