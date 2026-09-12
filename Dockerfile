@@ -14,7 +14,7 @@ RUN pnpm build && node scripts/bundle-worker.mjs sites-worker/dist/index.mjs
 
 FROM node:24-slim
 WORKDIR /app
-ENV NODE_ENV=production PORT=7860 FINTWIN_IDENTITY=cookie FINTWIN_DB=/data/fintwin.sqlite
+ENV NODE_ENV=production PORT=7860 FINTWIN_HOST=0.0.0.0 FINTWIN_ALLOW_PAID=0 FINTWIN_VOICE_MODE=text FINTWIN_DB=/data/fintwin.sqlite
 COPY --from=build /app /app
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node

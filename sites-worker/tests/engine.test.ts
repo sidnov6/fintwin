@@ -3,6 +3,11 @@ import { derivePicture, goal, mortgage, normalizeFactValue, parseAmount, retirem
 
 const now = new Date("2026-09-02T10:00:00Z");
 
+it('does not invent a 999% readiness score when pension covers the target',()=>{
+  const result=retirement({currentAssets:10000,monthlyContribution:100,years:10,expectedPensionMonthly:3000,targetSpendingMonthly:2000});
+  expect(result.requiredCapital).toBe(0);expect(result.readinessRatio).toBeNull();expect(result.warnings).toContain('pension_assumption_covers_spending_no_ratio');
+});
+
 describe("mortgage engine", () => {
   it("matches the golden annuity payment", () => {
     expect(mortgage(240000, 4, 240).payment).toBe(1454.35);
@@ -32,7 +37,8 @@ describe("retirement engine", () => {
     const fee = retirement({ currentAssets: 50000, monthlyContribution: 500, years: 20, annualFeePct: 1.5, targetSpendingMonthly: 3000 });
     expect(more.projectedReal).toBeGreaterThan(base.projectedReal);
     expect(fee.projectedReal).toBeLessThan(base.projectedReal);
-    expect(base.requiredCapital).toBe(900000);
+    expect(base.requiredCapital).toBeNull();
+    expect(retirement({...base.input,expectedPensionMonthly:0}).requiredCapital).toBe(900000);
   });
   it("flags missing spending target instead of guessing", () => {
     const result = retirement({ currentAssets: 10000, monthlyContribution: 100, years: 10 });
@@ -56,8 +62,9 @@ describe("picture", () => {
   it("derives the sample household consistently", () => {
     const picture = derivePicture(sampleFacts(now), now);
     const metric = (key: string) => picture.metrics.find(item => item.key === key)?.value;
-    expect(metric("net_worth")).toBe(487350);
-    expect(metric("free_cashflow")).toBe(568);
+    expect(metric("net_worth")).toBe(487349.91);
+    expect(metric("free_cashflow")).toBe(756.76);
+    expect(metric("available_after_saving")).toBe(188.76);
     expect(picture.insights.map(item => item.id)).toContain("mortgage_refix_horizon");
     expect(picture.mortgage?.monthsUntilRefix).toBe(13);
   });

@@ -15,7 +15,13 @@
     "dev:all": "node scripts/dev-api.mjs & pnpm --filter @fintwin/web dev",
     "bundle:worker": "node scripts/bundle-worker.mjs",
     "typecheck:worker": "tsc -p sites-worker",
-    "test:worker": "vitest run --root sites-worker"
+    "test:worker": "vitest run --root sites-worker",
+    "test:e2e": "pnpm --filter @fintwin/web test:e2e",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test:worker && pnpm test:web && pnpm test:e2e && pnpm build",
+    "demo": "node scripts/start-demo.mjs",
+    "start:production": "node scripts/dev-api.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "smoke:live": "node scripts/provider-smoke.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2"
@@ -24,6 +30,7 @@
     "drizzle-kit": "0.31.10",
     "esbuild": "0.28.2",
     "typescript": "^5.7.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "ws": "8.18.3"
   }
 }

@@ -1,13 +1,14 @@
 "use client";
 import { useState } from "react";
 import type { FactKey, Lang } from "@fintwin/contracts";
-import { FACT_BY_KEY } from "@fintwin/engine";
+import { FACT_BY_KEY, parseLocalizedNumber, normalizeFactValue } from "@fintwin/engine";
 import { copy } from "../lib/i18n";
 
 export function FactEditor({ factKey, lang, initial, onSave, onCancel, onRemove }: { factKey: FactKey; lang: Lang; initial?: number | string; onSave(value: number | string): Promise<void>; onCancel(): void; onRemove?(): Promise<void> }) {
   const def = FACT_BY_KEY[factKey];
   const t = copy(lang);
-  const [value, setValue] = useState<string>(initial === undefined ? "" : def.type === "months" ? String(Number(initial) / 12) : String(initial));
+  const inYears = factKey==='mortgage_remaining_months';
+  const [value, setValue] = useState<string>(initial === undefined ? "" : typeof initial==='number'?new Intl.NumberFormat(lang==='de'?'de-DE':'en-GB',{useGrouping:false,maximumFractionDigits:2}).format(inYears?initial/12:initial):String(initial));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -16,14 +17,13 @@ export function FactEditor({ factKey, lang, initial, onSave, onCancel, onRemove 
     setSaving(true); setError("");
     try {
       let next: number | string = value.trim();
-      if (def.type === "months") next = Math.round(Number(value.replace(",", ".")) * 12);
-      else if (def.type !== "text" && def.type !== "choice" && def.type !== "year_month") next = Number(value.replace(/\s/g, "").replace(",", "."));
-      if (typeof next === "number" && !Number.isFinite(next)) throw new Error("number");
+      if(!['text','choice','year_month'].includes(def.type)) {const parsed=parseLocalizedNumber(value,lang);if(parsed===null)throw new Error('number');next=inYears?parsed*12:parsed;}
+      if (normalizeFactValue(factKey,next)===null) throw new Error("number");
       await onSave(next);
     } catch { setError(lang === "de" ? "Das konnte ich nicht speichern. Bitte prüfen Sie den Wert." : "Could not save that. Please check the value."); setSaving(false); }
   }
 
-  const prefix = def.type === "money" ? "€" : def.type === "percent" ? "%" : def.type === "months" ? (lang === "de" ? "Jahre" : "years") : def.type === "age" ? (lang === "de" ? "Jahre" : "years") : null;
+  const prefix = def.type === "money" ? "€" : def.type === "percent" ? "%" : def.type === "months" ? (inYears?(lang === "de" ? "Jahre" : "years"):(lang==='de'?'Monate':'months')) : def.type === "age" ? (lang === "de" ? "Jahre" : "years") : null;
   return <form className="fact-editor field" onSubmit={submit}>
     <label htmlFor={`fact-${factKey}`}>{def.question[lang]}</label>
     <div className="input">

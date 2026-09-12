@@ -16,4 +16,8 @@ playwright-report/
 
 sites-worker/dist
 data/local.sqlite*
+data/last-text-smoke.json
+data/*.sqlite*
 apps/web/.env.local
+.next-dev/
+data/last-*-smoke.json

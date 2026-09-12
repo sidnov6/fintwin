@@ -4,10 +4,14 @@ import type { Card, Lang } from "@fintwin/contracts";
 import { FACT_BY_KEY } from "@fintwin/engine";
 import { factDisplay, metricValue, money, pct, yearMonth } from "../lib/format";
 import { copy } from "../lib/i18n";
+import { ScenarioView } from './Scenario';
+import { BankTrendsCard } from './Bank';
 
 export function CardView({ card, lang }: { card: Card; lang: Lang }) {
   const t = copy(lang).cards;
   switch (card.type) {
+    case 'bank_trends':return <BankTrendsCard report={card.report} lang={lang}/>;
+    case 'scenario':return <ScenarioView snapshot={card.snapshot} lang={lang}/>;
     case "facts":
       return <div className="card"><div className="card-head"><Database />{t.updated}<span className="spacer" /><small>{card.source === "sample" ? copy(lang).sampleNote : card.source === "edit" ? (lang === "de" ? "im Bild bearbeitet" : "edited in picture") : lang === "de" ? "aus dem Gespräch" : "from the conversation"}</small></div>
         <div className="chips">{card.items.map(item => <span className="chip accent" key={item.key}>{FACT_BY_KEY[item.key]?.label[lang] ?? item.key} <b className="num">{factDisplay(item.key, item.value, lang)}</b></span>)}</div></div>;

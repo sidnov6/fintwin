@@ -1,4 +1,5 @@
-import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 export const userProfiles = sqliteTable("user_profiles", {
   userId: text("user_id").primaryKey(),
@@ -60,3 +61,30 @@ export const scenarioRuns = sqliteTable("scenario_runs", {
   outputsJson: text("outputs_json").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+// Additive v3 storage. Legacy rows remain untouched; facts without provenance
+// are explicitly treated as pre-revision entries, never externally verified.
+export const householdHeads = sqliteTable("household_heads", {
+  userId: text("user_id").primaryKey(), revision: integer("revision").notNull().default(0),
+  epoch: integer("epoch").notNull().default(0), activeTurn: text("active_turn").notNull().default(""),
+});
+export const factProvenance = sqliteTable("fact_provenance", {
+  userId: text("user_id").notNull(), key: text("key").notNull(), json: text("json").notNull(),
+}, t => [primaryKey({ columns: [t.userId, t.key] })]);
+export const mutationReceipts = sqliteTable("mutation_receipts", {
+  userId: text("user_id").notNull(), id: text("id").notNull(), valid: integer("valid").notNull(),
+  resultJson: text("result_json").notNull(), createdAt: text("created_at").notNull(),
+}, t => [primaryKey({ columns: [t.userId, t.id] }), check("mutation_revision_guard", sql`${t.valid} = 1`)]);
+export const scenarioSnapshots = sqliteTable("scenario_snapshots", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull(), revision: integer("revision").notNull(),
+  epoch: integer("epoch").notNull(), payload: text("payload").notNull(), createdAt: text("created_at").notNull(),
+}, t => [index("idx_snapshots_user_created").on(t.userId, t.createdAt)]);
+export const demoSessions = sqliteTable("demo_sessions", {
+  tokenHash: text("token_hash").primaryKey(), userId: text("user_id").notNull(), expiresAt: integer("expires_at").notNull(),
+});
+export const usageEvents = sqliteTable("usage_events", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull(), window: text("window").notNull(),
+  kind: text("kind").notNull(), provider: text("provider").notNull(), reservedUsd: real("reserved_usd").notNull(),
+  chargedUsd: real("charged_usd"), basis: text("basis").notNull().default("reserved"),
+  tokensJson: text("tokens_json"), authorized: integer("authorized").notNull(), createdAt: text("created_at").notNull(),
+}, t => [index("idx_usage_window_user").on(t.window, t.userId), check("usage_budget_guard", sql`${t.authorized} = 1`)]);

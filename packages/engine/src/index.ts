@@ -50,6 +50,7 @@ export interface Fact {
   source: FactSource;
   updatedAt: string;
   note?: string;
+  provenance?: { revision: number; sourceTurnId: string; currency?: string; period?: string; basis?: string; scope?: string; originalValue?: number | string; evidence?: string };
 }
 
 export type Facts = Partial<Record<FactKey, Fact>>;
@@ -174,8 +175,10 @@ export function normalizeFactValue(key: FactKey, raw: unknown): number | string 
     if (year < 1990 || year > 2100 || month < 1 || month > 12) return null;
     return `${year}-${String(month).padStart(2, "0")}`;
   }
-  const value = typeof raw === "number" ? raw : Number(String(raw ?? "").replace(/[^0-9.-]/g, ""));
+  if (typeof raw !== "number") return null;
+  const value = raw;
   if (!Number.isFinite(value)) return null;
+  if (["age", "months", "year", "number"].includes(def.type) && !Number.isInteger(value)) return null;
   if (def.min !== undefined && value < def.min) return null;
   if (def.max !== undefined && value > def.max) return null;
   return def.type === "money" ? Math.round(value * 100) / 100 : Math.round(value * 100) / 100;
@@ -205,24 +208,30 @@ export interface MortgageResult {
   payment: number;
   totalInterest: number;
   payoffMonths: number;
-  engineVersion: "mortgage-1.0.0";
+  balanceByYear?: Array<{month:number;balance:number}>;
+  engineVersion: "mortgage-1.0.0" | "mortgage-1.1.0";
 }
 
 /** Annuity mortgage with monthly posting rounded to cents (ROUND_HALF_UP). */
 export function mortgage(principal: number, annualRatePct: number, months: number, specialRepayment = 0): MortgageResult {
+  if (![principal, annualRatePct, months, specialRepayment].every(Number.isFinite) || principal < 0 || principal > 1e9 || annualRatePct < 0 || annualRatePct > 20 || !Number.isInteger(months) || months < 1 || months > 600 || specialRepayment < 0 || specialRepayment > 1e6) throw new RangeError("Invalid mortgage inputs");
   const r = annualRatePct / 100 / 12;
   const payment = r > 0 ? cents(principal * r / (1 - Math.pow(1 + r, -months))) : cents(principal / months);
   let balance = principal, totalInterest = 0, payoffMonths = 0;
-  while (balance > 0 && payoffMonths < months + 1) {
+  const balanceByYear=[{month:0,balance:principal}];
+  while (balance > 0 && payoffMonths < months) {
     const interest = cents(balance * r);
     let principalPaid = cents(payment - interest + specialRepayment);
-    if (principalPaid > balance) principalPaid = balance;
+    // Absorb the cent-rounding residual in the contractual final instalment,
+    // rather than inventing an additional mortgage month for a few cents.
+    if (principalPaid > balance || payoffMonths === months - 1) principalPaid = balance;
     balance = cents(balance - principalPaid);
     totalInterest = cents(totalInterest + interest);
     payoffMonths++;
+    if(payoffMonths%12===0 || balance===0)balanceByYear.push({month:payoffMonths,balance});
     if (principalPaid <= 0 && r > 0 && payoffMonths > months) break;
   }
-  return { principal, annualRatePct, months, specialRepayment, payment, totalInterest, payoffMonths, engineVersion: "mortgage-1.0.0" };
+  return { principal, annualRatePct, months, specialRepayment, payment, totalInterest, payoffMonths, balanceByYear, engineVersion: "mortgage-1.1.0" };
 }
 
 export interface RetirementInput {
@@ -245,13 +254,14 @@ export interface RetirementResult {
   readinessRatio: number | null;
   sustainableMonthlyReal: number;
   warnings: string[];
-  engineVersion: "retirement-1.0.0";
+  engineVersion: "retirement-1.0.0" | "retirement-1.1.0";
 }
 
 /** Retirement baseline in today's euros. Sensitivity analysis, not a forecast. */
 export function retirement(input: RetirementInput): RetirementResult {
   const annualReturnPct = input.annualReturnPct ?? 5, annualFeePct = input.annualFeePct ?? 0.5, inflationPct = input.inflationPct ?? 2, withdrawalRatePct = input.withdrawalRatePct ?? 4;
-  const years = Math.max(0, input.years), months = Math.round(years * 12);
+  const years = input.years, months = Math.round(years * 12);
+  if (![input.currentAssets, input.monthlyContribution, years, annualReturnPct, annualFeePct, inflationPct, withdrawalRatePct].every(Number.isFinite) || input.currentAssets < 0 || input.currentAssets > 2e9 || input.monthlyContribution < 0 || input.monthlyContribution > 1e6 || years < 0 || years > 80 || annualReturnPct < -50 || annualReturnPct > 30 || annualFeePct < 0 || annualFeePct > 10 || inflationPct < 0 || inflationPct > 20 || withdrawalRatePct <= 0 || withdrawalRatePct > 20 || [input.expectedPensionMonthly, input.targetSpendingMonthly].some(v => v !== undefined && v !== null && (!Number.isFinite(v) || v < 0 || v > 1e6))) throw new RangeError("Invalid retirement inputs");
   const net = (annualReturnPct - annualFeePct) / 100;
   const rm = Math.pow(1 + net, 1 / 12) - 1;
   const fv = input.currentAssets * Math.pow(1 + rm, months) + (rm === 0 ? input.monthlyContribution * months : input.monthlyContribution * ((Math.pow(1 + rm, months) - 1) / rm));
@@ -260,17 +270,19 @@ export function retirement(input: RetirementInput): RetirementResult {
   const pension = input.expectedPensionMonthly ?? null, spending = input.targetSpendingMonthly ?? null;
   const warnings: string[] = [];
   let gapMonthly: number | null = null, requiredCapital: number | null = null, readinessRatio: number | null = null;
-  if (spending !== null) {
-    gapMonthly = cents(Math.max(spending - (pension ?? 0), 0));
+  if (spending !== null && pension !== null) {
+    gapMonthly = cents(Math.max(spending - pension, 0));
     requiredCapital = cents(gapMonthly * 12 / (withdrawalRatePct / 100));
-    readinessRatio = requiredCapital > 0 ? Math.round(projectedReal / requiredCapital * 1000) / 1000 : 9.99;
-    if (pension === null) warnings.push("pension_missing");
-  } else warnings.push("spending_missing");
+    readinessRatio = requiredCapital > 0 ? Math.round(projectedReal / requiredCapital * 1000) / 1000 : null;
+  }
+  if (pension === null) warnings.push("pension_missing");
+  if (spending === null) warnings.push("spending_missing");
+  if(requiredCapital===0)warnings.push('pension_assumption_covers_spending_no_ratio');
   if (years <= 0) warnings.push("already_at_retirement_age");
   const sustainableMonthlyReal = cents(projectedReal * (withdrawalRatePct / 100) / 12);
   return {
     input: { currentAssets: input.currentAssets, monthlyContribution: input.monthlyContribution, years, annualReturnPct, annualFeePct, inflationPct, withdrawalRatePct, expectedPensionMonthly: pension, targetSpendingMonthly: spending },
-    projectedNominal, projectedReal, gapMonthly, requiredCapital, readinessRatio, sustainableMonthlyReal, warnings, engineVersion: "retirement-1.0.0",
+    projectedNominal, projectedReal, gapMonthly, requiredCapital, readinessRatio, sustainableMonthlyReal, warnings, engineVersion: "retirement-1.1.0",
   };
 }
 
@@ -287,6 +299,7 @@ export interface GoalResult {
 
 /** Months until start + monthly contributions (compounding) reach target. */
 export function goal(target: number, start: number, monthly: number, annualReturnPct: number, now: Date): GoalResult {
+  if (![target, start, monthly, annualReturnPct, now.getTime()].every(Number.isFinite) || target <= 0 || target > 1e10 || start < 0 || start > 2e9 || monthly < 0 || monthly > 1e6 || annualReturnPct < -50 || annualReturnPct > 30) throw new RangeError("Invalid goal inputs");
   const r = annualReturnPct / 100 / 12;
   let months: number | null = 0, balance = start;
   if (start < target) {
@@ -312,7 +325,7 @@ export type Tone = "positive" | "neutral" | "attention" | "unknown";
 export type Unit = "eur" | "eur_month" | "months" | "percent" | "ratio" | "count";
 
 export interface Metric {
-  key: "net_worth" | "free_cashflow" | "runway" | "savings_rate" | "total_assets" | "total_liabilities" | "liquid";
+  key: "net_worth" | "free_cashflow" | "available_after_saving" | "runway" | "savings_rate" | "total_assets" | "total_liabilities" | "liquid";
   label: L;
   value: number | null;
   unit: Unit;
@@ -350,7 +363,7 @@ export interface Picture {
 
 const eur = (value: number, lang: Lang) => new Intl.NumberFormat(lang === "de" ? "de-DE" : "en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value);
 
-function sid(key: FactKey, facts: Facts) { const fact = facts[key]; return fact ? `fact_${key}_${fact.source}` : `missing_${key}`; }
+function sid(key: FactKey, facts: Facts) { const fact = facts[key]; return fact ? `fact:${key}:revision:${fact.provenance?.revision ?? 0}` : `missing:${key}`; }
 
 export function monthsBetween(now: Date, yearMonth: string): number {
   const [year, month] = yearMonth.split("-").map(Number);
@@ -365,7 +378,7 @@ export function derivePicture(facts: Facts, now: Date, portfolio?: PortfolioSumm
   const totalAssets = assetsKnown ? (cash ?? 0) + (investments ?? 0) + (retirementAssets ?? 0) + (property ?? 0) : null;
   const liabilitiesKnown = [mortgageBalance, otherDebt].some(value => value !== null);
   const totalLiabilities = liabilitiesKnown ? (mortgageBalance ?? 0) + (otherDebt ?? 0) : null;
-  const netWorth = totalAssets !== null ? totalAssets - (totalLiabilities ?? 0) : null;
+  const netWorth = totalAssets !== null ? cents(totalAssets - (totalLiabilities ?? 0)) : null;
   const freeCashflow = income !== null && expenses !== null ? cents(income - expenses) : null;
   const savingsRate = income && freeCashflow !== null ? Math.round(freeCashflow / income * 1000) / 10 : null;
   const reserveTarget = n("emergency_target_months") ?? 6;
@@ -375,9 +388,9 @@ export function derivePicture(facts: Facts, now: Date, portfolio?: PortfolioSumm
   const metrics: Metric[] = [
     { key: "net_worth", label: { de: "Nettovermögen", en: "Net worth" }, value: netWorth, unit: "eur", tone: netWorth === null ? "unknown" : netWorth >= 0 ? "neutral" : "attention",
       sourceIds: (["cash_liquid", "investments_value", "retirement_assets", "property_value", "mortgage_balance", "other_debt"] as FactKey[]).filter(key => facts[key]).map(key => sid(key, facts)),
-      missing: (["cash_liquid", "investments_value", "property_value", "mortgage_balance", "other_debt"] as FactKey[]).filter(key => !facts[key] && !(key === "mortgage_balance" && property === 0)),
+      missing: (["cash_liquid", "investments_value", "retirement_assets", "property_value", "mortgage_balance", "other_debt"] as FactKey[]).filter(key => !facts[key] && !(key === "mortgage_balance" && property === 0)),
       note: netWorth !== null && !liabilitiesKnown ? { de: "Ohne bekannte Schulden", en: "No debts recorded yet" } : undefined },
-    { key: "free_cashflow", label: { de: "Frei pro Monat", en: "Free each month" }, value: freeCashflow, unit: "eur_month", tone: freeCashflow === null ? "unknown" : freeCashflow > 0 ? "positive" : "attention",
+    { key: "free_cashflow", label: { de: "Überschuss vor Sparrate", en: "Surplus before saving" }, value: freeCashflow, unit: "eur_month", tone: freeCashflow === null ? "unknown" : freeCashflow > 0 ? "positive" : "attention",
       sourceIds: (["income_net_monthly", "expenses_monthly"] as FactKey[]).filter(key => facts[key]).map(key => sid(key, facts)), missing: (["income_net_monthly", "expenses_monthly"] as FactKey[]).filter(key => !facts[key]) },
     { key: "runway", label: { de: "Notfallreserve", en: "Emergency runway" }, value: runway, unit: "months", tone: runway === null ? "unknown" : runway >= reserveTarget ? "positive" : runway >= reserveTarget / 2 ? "neutral" : "attention",
       sourceIds: (["cash_liquid", "expenses_monthly"] as FactKey[]).filter(key => facts[key]).map(key => sid(key, facts)), missing: (["cash_liquid", "expenses_monthly"] as FactKey[]).filter(key => !facts[key]),
@@ -385,9 +398,13 @@ export function derivePicture(facts: Facts, now: Date, portfolio?: PortfolioSumm
     { key: "savings_rate", label: { de: "Sparquote", en: "Savings rate" }, value: savingsRate, unit: "percent", tone: savingsRate === null ? "unknown" : savingsRate >= 15 ? "positive" : savingsRate > 0 ? "neutral" : "attention",
       sourceIds: (["income_net_monthly", "expenses_monthly"] as FactKey[]).filter(key => facts[key]).map(key => sid(key, facts)), missing: (["income_net_monthly", "expenses_monthly"] as FactKey[]).filter(key => !facts[key]) },
     { key: "total_assets", label: { de: "Vermögen gesamt", en: "Total assets" }, value: totalAssets, unit: "eur", tone: totalAssets === null ? "unknown" : "neutral", sourceIds: [], missing: [] },
-    { key: "total_liabilities", label: { de: "Schulden gesamt", en: "Total debt" }, value: totalLiabilities ?? (assetsKnown ? 0 : null), unit: "eur", tone: "neutral", sourceIds: [], missing: [] },
+    { key: "total_liabilities", label: { de: "Erfasste Schulden", en: "Recorded debt" }, value: totalLiabilities, unit: "eur", tone: "neutral", sourceIds: [], missing: (["mortgage_balance", "other_debt"] as FactKey[]).filter(k=>!facts[k] && !(k==='mortgage_balance' && property===0)) },
     { key: "liquid", label: { de: "Sofort verfügbar", en: "Available now" }, value: cash, unit: "eur", tone: cash === null ? "unknown" : "neutral", sourceIds: cash === null ? [] : [sid("cash_liquid", facts)], missing: cash === null ? ["cash_liquid"] : [] },
   ];
+
+  metrics.push({key:'available_after_saving',label:{de:'Nach vereinbarter Sparrate',en:'After committed saving'},value:freeCashflow!==null && saving!==null ? cents(freeCashflow-saving):null,unit:'eur_month',tone:'neutral',sourceIds:(["income_net_monthly","expenses_monthly","monthly_saving"] as FactKey[]).map(k=>sid(k,facts)),missing:(["income_net_monthly","expenses_monthly","monthly_saving"] as FactKey[]).filter(k=>!facts[k]),note:{de:'Ausgaben enthalten die Wohnkosten. Keine doppelte Kreditrate.',en:'Spending includes housing. Mortgage is not deducted twice.'}});
+  if (metrics[0].missing.length) { metrics[0].label={de:'Teilbild Nettovermögen',en:'Partial net worth'};metrics[0].note={de:'Nur erfasste Werte. Fehlende Angaben sind nicht null.',en:'Recorded values only. Missing information is not zero.'}; }
+  metrics.find(m=>m.key==='total_assets')!.missing=(["cash_liquid","investments_value","retirement_assets","property_value"] as FactKey[]).filter(k=>!facts[k]);
 
   // Mortgage sensitivity
   let mortgageBlock: Picture["mortgage"] = null;
@@ -402,7 +419,7 @@ export function derivePicture(facts: Facts, now: Date, portfolio?: PortfolioSumm
 
   // Retirement
   let retirementBlock: RetirementResult | null = null;
-  if (age !== null && retirementAge !== null && (investments !== null || retirementAssets !== null)) {
+  if (age !== null && retirementAge !== null && retirementAge >= age && investments !== null && retirementAssets !== null && saving !== null) {
     retirementBlock = retirement({ currentAssets: (investments ?? 0) + (retirementAssets ?? 0), monthlyContribution: saving ?? Math.max(0, freeCashflow ?? 0), years: retirementAge - age, expectedPensionMonthly: n("expected_pension_monthly"), targetSpendingMonthly: n("retirement_spending_monthly") });
     assumptions.push({ de: "Rente: 5 % Rendite, 0,5 % Kosten, 2 % Inflation, 4 % Entnahme.", en: "Retirement: 5% return, 0.5% fees, 2% inflation, 4% withdrawal." });
     if (saving === null) assumptions.push({ de: "Sparrate mit dem freien Cashflow angenommen.", en: "Monthly investing assumed equal to free cashflow." });
@@ -411,13 +428,17 @@ export function derivePicture(facts: Facts, now: Date, portfolio?: PortfolioSumm
   // Goal
   let goalBlock: GoalResult | null = null;
   const goalAmount = n("goal_target_amount");
-  if (goalAmount && goalAmount > 0) {
+  if (goalAmount && goalAmount > 0 && cash !== null && investments !== null && saving !== null) {
     goalBlock = goal(goalAmount, (cash ?? 0) + (investments ?? 0), saving ?? Math.max(0, freeCashflow ?? 0), 4, now);
     assumptions.push({ de: "Ziel: 4 % Rendite auf Guthaben und Depot.", en: "Goal: 4% return on cash and investments." });
   }
 
   // Insights (neutral wording: topics to review, not verdicts)
   const insights: Insight[] = [];
+  const loanMonths=n('mortgage_remaining_months');
+  if(loanMonths!==null&&age!==null&&retirementAge!==null&&retirementAge>age&&mortgageBlock&&loanMonths>(retirementAge-age)*12){
+    insights.push({id:'mortgage_retirement_tension',severity:'attention',title:{de:'Ruhestand und schuldenfreies Haus passen noch nicht zusammen',en:'Retirement and mortgage-free dates do not yet line up'},body:{de:`Bis zum Wunsch-Ruhestand sind es ${retirementAge-age} Jahre, die aktuelle Modelllaufzeit des Darlehens beträgt ${loanMonths} Monate. Eine Sondertilgung muss auch zum verfügbaren Monatsbudget passen.`,en:`Your target retirement is ${retirementAge-age} years away; the current modeled mortgage term is ${loanMonths} months. Any extra repayment must also fit your unallocated monthly budget.`},sourceIds:[sid('age',facts),sid('retirement_age',facts),sid('mortgage_remaining_months',facts)],ask:{de:'Wie passt meine Immobilie zum Ruhestandsziel?',en:'How does my mortgage fit my retirement goal?'}});
+  }
   if (mortgageBlock?.monthsUntilRefix !== null && mortgageBlock?.monthsUntilRefix !== undefined && mortgageBlock.monthsUntilRefix <= 18 && mortgageBlock.monthsUntilRefix >= -1) {
     const m = mortgageBlock.monthsUntilRefix, delta = cents(mortgageBlock.sensitivity[2].payment - mortgageBlock.sensitivity[0].payment);
     insights.push({ id: "mortgage_refix_horizon", severity: "attention", title: { de: `Zinsbindung endet in ${m} Monaten`, en: `Fixed rate ends in ${m} months` },
@@ -444,7 +465,9 @@ export function derivePicture(facts: Facts, now: Date, portfolio?: PortfolioSumm
     body: { de: "Ich weiß nicht, ob Ihr Einkommen bei längerer Krankheit abgesichert ist. Das ist eine Angabe, keine Bewertung.", en: "I do not know whether your income is covered if you could not work. That is a missing fact, not a verdict." },
     sourceIds: [sid("income_protection", facts)], ask: { de: "Warum ist Einkommensabsicherung relevant?", en: "Why does income protection matter?" } });
   if (retirementBlock) {
-    if (retirementBlock.readinessRatio !== null) {
+    if(retirementBlock.requiredCapital===0){
+      insights.push({id:'retirement_pension_covers_target',severity:'info',title:{de:'Rentenannahme deckt das Wunschbudget',en:'Pension assumption covers the spending target'},body:{de:'Unter diesen Annahmen bleibt keine monatliche Versorgungslücke. Ein Deckungsverhältnis mit null Kapitalbedarf ist nicht definiert; Steuern und Rentenanpassungen bleiben außerhalb des Modells.',en:'Under these assumptions there is no monthly spending gap. A readiness ratio with zero required capital is undefined; tax and pension indexation remain outside the model.'},sourceIds:[sid('expected_pension_monthly',facts),sid('retirement_spending_monthly',facts)],ask:{de:'Welche Rentenannahmen sollten wir prüfen?',en:'Which pension assumptions should we verify?'}});
+    } else if (retirementBlock.readinessRatio !== null) {
       const pct = Math.round(retirementBlock.readinessRatio * 100);
       insights.push({ id: "retirement_readiness", severity: pct >= 100 ? "good" : pct >= 80 ? "info" : "attention", title: { de: `Rente mit ${retirementAge}: ${pct} % Deckung`, en: `Retiring at ${retirementAge}: ${pct}% covered` },
         body: { de: `Modellrechnung in heutigen Euro: ${eur(retirementBlock.projectedReal, "de")} gegenüber ${eur(retirementBlock.requiredCapital ?? 0, "de")} Bedarf.`, en: `Model in today's euros: ${eur(retirementBlock.projectedReal, "en")} against ${eur(retirementBlock.requiredCapital ?? 0, "en")} needed.` },
@@ -486,13 +509,18 @@ export function derivePicture(facts: Facts, now: Date, portfolio?: PortfolioSumm
 // Sample household (clearly labelled synthetic data)
 // ---------------------------------------------------------------------------
 
-export function sampleFacts(now: Date): Facts {
+export * from './bank';
+export const SAMPLE_VERSION = "household-2026-09-04-v3";
+export const SAMPLE_AS_OF = "2026-09-04T12:00:00.000Z";
+export function sampleFacts(now: Date = new Date(SAMPLE_AS_OF)): Facts {
   const updatedAt = now.toISOString();
+  const payment = mortgage(240000, 2.15, 240).payment;
+  const investments = cents(SAMPLE_HOLDINGS.reduce((sum, h) => sum + h.quantity * SAMPLE_QUOTES[h.symbol].price / (h.currency === "USD" ? SAMPLE_QUOTES["EURUSD=X"].price : 1), 0));
   const entries: Array<[FactKey, number | string]> = [
     ["age", 52], ["household", "family"], ["dependents", 2],
-    ["income_net_monthly", 7240], ["expenses_monthly", 6672], ["monthly_saving", 568],
-    ["cash_liquid", 61900], ["investments_value", 148850], ["retirement_assets", 96600], ["property_value", 420000],
-    ["mortgage_balance", 240000], ["mortgage_rate_pct", 2.15], ["mortgage_fixed_until", "2027-10"], ["mortgage_remaining_months", 240], ["mortgage_payment_monthly", 1420],
+    ["income_net_monthly", 7240], ["expenses_monthly", cents(6672 - 1420 + payment)], ["monthly_saving", 568],
+    ["cash_liquid", 61900], ["investments_value", investments], ["retirement_assets", 96600], ["property_value", 420000],
+    ["mortgage_balance", 240000], ["mortgage_rate_pct", 2.15], ["mortgage_fixed_until", "2027-10"], ["mortgage_remaining_months", 240], ["mortgage_payment_monthly", payment],
     ["other_debt", 0], ["retirement_age", 63], ["retirement_spending_monthly", 3800], ["expected_pension_monthly", 2100],
     ["goal_primary", "Retire at 63 with the house paid off"], ["income_protection", "unknown"], ["emergency_target_months", 6],
   ];
@@ -519,27 +547,24 @@ export const SAMPLE_QUOTES: Record<string, { price: number; currency: string; on
 // Parsing helpers shared by the offline companion and the UI
 // ---------------------------------------------------------------------------
 
-/** Parse a human money/number expression: "4.200", "4,200", "4k", "1,5 Mio", "€ 500", "none". */
+/** Explicit locale adapter. No coercion at the API boundary. */
+export function parseLocalizedNumber(text: string, lang: Lang): number | null {
+  const value = text.trim().replace(/[\u00a0\u202f]/g, " ");
+  const pattern = lang === "de" ? /^-?(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d{1,2})?$/ : /^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/;
+  if (!pattern.test(value)) return null;
+  const numeric = Number(lang === "de" ? value.replace(/\./g, "").replace(",", ".") : value.replace(/,/g, ""));
+  return Number.isFinite(numeric) ? cents(numeric) : null;
+}
+
+/** Conversational adapter accepts one number only; the intake parser first
+ * isolates evidence spans, so ages/corrections cannot steal another amount. */
 export function parseAmount(text: string, lang: Lang): number | null {
   const lower = text.toLowerCase().trim();
-  if (/^(keine|nichts|nein|none|nothing|no|zero|null|0)\b/.test(lower)) return 0;
-  const match = lower.replace(/€|eur|euro/g, " ").match(/(-?\d[\d.,\s']*)\s*(k|tsd|tausend|thousand|mio|m|million|millionen|mn)?\b/);
-  if (!match) return null;
-  let digits = match[1].replace(/\s|'/g, "");
-  const suffix = match[2] ?? "";
-  // Decide decimal vs thousands separator.
-  if (/[.,]/.test(digits)) {
-    const lastSep = Math.max(digits.lastIndexOf("."), digits.lastIndexOf(","));
-    const decimals = digits.length - lastSep - 1;
-    const sepCount = (digits.match(/[.,]/g) || []).length;
-    if (sepCount === 1 && decimals === 3) digits = digits.replace(/[.,]/g, "");
-    else if (sepCount === 1 && decimals <= 2) digits = digits.slice(0, lastSep).replace(/[.,]/g, "") + "." + digits.slice(lastSep + 1);
-    else if (sepCount > 1) { const decimalChar = lang === "de" ? "," : "."; digits = digits.replace(new RegExp(`[${decimalChar === "," ? "." : ","}]`, "g"), "").replace(decimalChar, "."); }
-    else digits = digits.replace(/[.,]/g, "");
-  }
-  let value = Number(digits);
-  if (!Number.isFinite(value)) return null;
-  if (/^(k|tsd|tausend|thousand)$/.test(suffix)) value *= 1000;
-  if (/^(mio|m|million|millionen|mn)$/.test(suffix)) value *= 1e6;
-  return Math.round(value * 100) / 100;
+  if (/^(?:none|nothing|no|zero|keine?|nichts|nein|null|0)(?:\s+(?:property|debt|investments?|immobilie|schulden|angelegt|invested|yet))*[.!]?$/.test(lower)) return 0;
+  const matches = [...lower.matchAll(/-?\d[\d.,]*(?:\s*(?:k|tsd|tausend|thousand|mio|millionen?|mn)\b)?/g)];
+  if (matches.length !== 1) return null;
+  const match = matches[0][0].match(/^(-?[\d.,]+)\s*(.*)$/)!;
+  const numeric = parseLocalizedNumber(match[1].replace(/[.,]$/, ""), lang);
+  if (numeric === null) return null;
+  return cents(numeric * (/^(k|tsd|tausend|thousand)$/.test(match[2]) ? 1000 : /^(mio|millionen?|mn)$/.test(match[2]) ? 1e6 : 1));
 }

@@ -5,6 +5,7 @@
 import type { Fact, FactKey, Facts, Lang } from "@fintwin/engine";
 import { isFactKey, normalizeFactValue } from "@fintwin/engine";
 import type { Card, Memory, Message, NextStep, Profile } from "@fintwin/contracts";
+import { AppError } from "./errors";
 
 export interface D1PreparedStatement {
   bind(...values: unknown[]): D1PreparedStatement;
@@ -33,52 +34,39 @@ export interface Env {
   ELEVENLABS_STT_MODEL?: string;
   ELEVENLABS_TTS_MODEL?: string;
   ELEVENLABS_VOICE_ID?: string;
+  FINTWIN_DEMO_PASSPHRASE?: string;
+  FINTWIN_LOCAL_OPEN?: string;
+  FINTWIN_TRUST_PLATFORM?: string;
+  FINTWIN_ALLOWED_ORIGIN?: string;
+  FINTWIN_ALLOW_PAID?: string;
+  FINTWIN_VOICE_MODE?: string;
+  FINTWIN_SESSION_BUDGET_USD?: string;
+  FINTWIN_TOTAL_BUDGET_USD?: string;
+  FINTWIN_BUDGET_WINDOW?: string;
+  FINTWIN_REALTIME_MAX_SECONDS?: string;
+  FINTWIN_REALTIME_IDLE_SECONDS?: string;
+  FINTWIN_REALTIME_MAX_RESPONSES?: string;
+  FINTWIN_REALTIME_RESERVE_USD?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_CHAT_MODEL?: string;
+  OPENAI_STT_MODEL?: string;
+  OPENAI_TTS_MODEL?: string;
+  OPENAI_TTS_VOICE?: string;
+  OPENAI_REALTIME_MODEL?: string;
+  OPENAI_REALTIME_VOICE?: string;
+  LLM_TOKEN_FIELD?: string;
+  LLM_ALLOW_TEMPERATURE?: string;
+  REALTIME?: { handle(request: Request, userId: string): Promise<Response>; sync(userId: string): Promise<void>; stop(userId: string): Promise<void> };
+  TEXT_SMOKE?:()=>{status:string;at:string|null;kind:string;model?:string|null};
 }
-
-const SCHEMA = [
-  `CREATE TABLE IF NOT EXISTS user_profiles (user_id TEXT PRIMARY KEY, email TEXT, name TEXT NOT NULL, net_worth_eur REAL NOT NULL DEFAULT 0, expectations TEXT NOT NULL DEFAULT '', bank_connected INTEGER NOT NULL DEFAULT 1, preferred_language TEXT NOT NULL DEFAULT 'de', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
-  `CREATE INDEX IF NOT EXISTS idx_user_profiles_updated_at ON user_profiles(updated_at)`,
-  `CREATE TABLE IF NOT EXISTS conversation_turns (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, source_ids TEXT NOT NULL DEFAULT '[]', mode TEXT NOT NULL DEFAULT 'text', created_at TEXT NOT NULL)`,
-  `CREATE INDEX IF NOT EXISTS idx_conversation_turns_user_created ON conversation_turns(user_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS user_facts (user_id TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, source TEXT NOT NULL, note TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (user_id, key))`,
-  `CREATE TABLE IF NOT EXISTS user_memories (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL)`,
-  `CREATE INDEX IF NOT EXISTS idx_user_memories_user ON user_memories(user_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS user_next_steps (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, text TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)`,
-  `CREATE INDEX IF NOT EXISTS idx_user_next_steps_user ON user_next_steps(user_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS scenario_runs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, inputs_json TEXT NOT NULL, outputs_json TEXT NOT NULL, created_at TEXT NOT NULL)`,
-];
-// Columns added after the first deployment; applied idempotently.
-const COLUMN_UPGRADES: Array<[table: string, column: string, ddl: string]> = [
-  ["user_profiles", "onboarding_done", "INTEGER NOT NULL DEFAULT 0"],
-  ["user_profiles", "voice_autoplay", "INTEGER NOT NULL DEFAULT 1"],
-  ["user_profiles", "sample_loaded", "INTEGER NOT NULL DEFAULT 0"],
-  ["conversation_turns", "cards", "TEXT NOT NULL DEFAULT '[]'"],
-  ["conversation_turns", "suggestions", "TEXT NOT NULL DEFAULT '[]'"],
-  ["conversation_turns", "meta", "TEXT NOT NULL DEFAULT '{}'"],
-];
-
-const readiness = new WeakMap<D1Database, Promise<void>>();
 
 export function db(env: Env): D1Database {
   if (!env.DB) throw new Error("Persistent storage is unavailable.");
   return env.DB;
 }
 
-export async function ensureSchema(env: Env): Promise<void> {
-  const database = db(env);
-  let ready = readiness.get(database);
-  if (!ready) {
-    ready = (async () => {
-      await database.batch(SCHEMA.map(sql => database.prepare(sql)));
-      for (const [table, column, ddl] of COLUMN_UPGRADES) {
-        const columns = await database.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
-        if (!(columns.results || []).some(row => row.name === column)) await database.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`).run();
-      }
-    })().catch(error => { readiness.delete(database); throw error; });
-    readiness.set(database, ready);
-  }
-  await ready;
-}
+/** Schema is owned by generated migrations, applied before the host starts. */
+export async function ensureSchema(env: Env): Promise<void> { db(env); }
 
 // --- profile ----------------------------------------------------------------
 
@@ -101,8 +89,9 @@ export async function getProfile(env: Env, userId: string): Promise<Profile | nu
   return profile;
 }
 
-export async function upsertProfile(env: Env, userId: string, patch: Partial<Profile> & { name?: string }): Promise<Profile> {
+export async function upsertProfile(env: Env, userId: string, patch: Partial<Profile> & { name?: string }, context?:MutationContext): Promise<Profile> {
   await ensureSchema(env);
+  const head=await getHead(env,userId);
   const current = await getProfile(env, userId);
   const now = new Date().toISOString();
   const next: Profile = {
@@ -115,9 +104,10 @@ export async function upsertProfile(env: Env, userId: string, patch: Partial<Pro
     createdAt: current?.createdAt ?? now,
     updatedAt: now,
   };
-  await db(env).prepare(`INSERT INTO user_profiles (user_id, email, name, net_worth_eur, expectations, bank_connected, preferred_language, onboarding_done, voice_autoplay, sample_loaded, created_at, updated_at) VALUES (?,?,?,0,'',1,?,?,?,?,?,?)
+  const statement=db(env).prepare(`INSERT INTO user_profiles (user_id, email, name, net_worth_eur, expectations, bank_connected, preferred_language, onboarding_done, voice_autoplay, sample_loaded, created_at, updated_at) VALUES (?,?,?,0,'',1,?,?,?,?,?,?)
     ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, name = excluded.name, preferred_language = excluded.preferred_language, onboarding_done = excluded.onboarding_done, voice_autoplay = excluded.voice_autoplay, sample_loaded = excluded.sample_loaded, updated_at = excluded.updated_at`)
-    .bind(userId, next.email ?? null, next.name, next.language, next.onboardingDone ? 1 : 0, next.voiceAutoplay ? 1 : 0, next.sampleLoaded ? 1 : 0, next.createdAt, next.updatedAt).run();
+    .bind(userId, next.email ?? null, next.name, next.language, next.onboardingDone ? 1 : 0, next.voiceAutoplay ? 1 : 0, next.sampleLoaded ? 1 : 0, next.createdAt, next.updatedAt);
+  await atomic(env,userId,context??{id:crypto.randomUUID(),expectedRevision:head.revision,epoch:head.epoch},next,[statement],false);
   return next;
 }
 
@@ -131,28 +121,75 @@ export async function getFacts(env: Env, userId: string): Promise<Facts> {
     if (!isFactKey(row.key)) continue;
     try { facts[row.key] = { key: row.key, value: JSON.parse(row.value_json), source: row.source, updatedAt: row.updated_at, note: row.note ?? undefined }; } catch { /* skip corrupt row */ }
   }
+  const provenance = await db(env).prepare("SELECT key, json FROM fact_provenance WHERE user_id=?").bind(userId).all<{ key: FactKey; json: string }>();
+  for (const row of provenance.results ?? []) if (facts[row.key]) facts[row.key]!.provenance = parseJson(row.json, undefined);
   return facts;
 }
 
-export interface FactInput { key: string; value: unknown; note?: string }
+export interface FactInput { key: string; value: unknown; note?: string; provenance?: Fact["provenance"] }
+export interface Head { revision: number; epoch: number; active_turn: string }
+export interface MutationContext { id: string; expectedRevision: number; epoch: number; turnId?: string }
+export async function getHead(env: Env, userId: string): Promise<Head> {
+  await db(env).prepare("INSERT OR IGNORE INTO household_heads(user_id) VALUES (?)").bind(userId).run();
+  return (await db(env).prepare("SELECT revision, epoch, active_turn FROM household_heads WHERE user_id=?").bind(userId).first<Head>())!;
+}
+export async function beginTurn(env: Env, userId: string, id: string, signal?:AbortSignal,expectedEpoch?:number): Promise<Head> {
+  if(signal?.aborted)throw new AppError('superseded',409);
+  const head=await getHead(env, userId);
+  if(signal?.aborted||(expectedEpoch!==undefined&&head.epoch!==expectedEpoch))throw new AppError('superseded',409);
+  await atomic(env,userId,{id:`begin:${id}`,expectedRevision:head.revision,epoch:head.epoch},{began:id},[db(env).prepare("UPDATE household_heads SET active_turn=? WHERE user_id=?").bind(id, userId)],false);
+  return getHead(env, userId);
+}
+export async function receipt<T>(env: Env, userId: string, id: string): Promise<T | null> {
+  const row = await db(env).prepare("SELECT result_json FROM mutation_receipts WHERE user_id=? AND id=?").bind(userId, id).first<{result_json: string}>();
+  return row ? JSON.parse(row.result_json) as T : null;
+}
+/** The CHECK constraint is the compare-and-swap guard. D1 batch and the Node
+ * adapter roll the whole operation back if a revision/turn is superseded. */
+export async function atomic<T>(env: Env, userId: string, ctx: MutationContext, result: T, statements: D1PreparedStatement[], advance = true): Promise<T> {
+  const previous = await receipt<T>(env, userId, ctx.id);
+  if (previous) return previous;
+  const database = db(env);
+  try {
+    await database.batch([
+      database.prepare("INSERT INTO mutation_receipts(user_id,id,valid,result_json,created_at) VALUES (?,?,(SELECT CASE WHEN revision=? AND epoch=? AND (?='' OR active_turn=?) THEN 1 ELSE 0 END FROM household_heads WHERE user_id=?),?,?)")
+        .bind(userId, ctx.id, ctx.expectedRevision, ctx.epoch, ctx.turnId ?? "", ctx.turnId ?? "", userId, JSON.stringify(result), new Date().toISOString()),
+      ...statements,
+      ...(advance ? [database.prepare("UPDATE household_heads SET revision=revision+1 WHERE user_id=?").bind(userId)] : []),
+    ]);
+    return result;
+  } catch {
+    const repeated = await receipt<T>(env, userId, ctx.id);
+    if (repeated) return repeated;
+    throw new AppError("state_changed", 409, "Your picture changed. Refresh it before applying this change.");
+  }
+}
 
 /** Validates and stores facts. Returns the accepted facts and the keys that were rejected. */
-export async function setFacts(env: Env, userId: string, inputs: FactInput[], source: Fact["source"]): Promise<{ accepted: Fact[]; rejected: string[] }> {
+export async function setFacts(env: Env, userId: string, inputs: FactInput[], source: Fact["source"], context?: MutationContext,remove:FactKey[]=[]): Promise<{ accepted: Fact[]; rejected: string[] }> {
   await ensureSchema(env);
+  const head = await getHead(env, userId);
+  const ctx = context ?? { id: crypto.randomUUID(), expectedRevision: head.revision, epoch: head.epoch };
+  const previous = await receipt<{accepted: Fact[]; rejected: string[]}>(env, userId, ctx.id);
+  if (previous) return previous;
   const accepted: Fact[] = [], rejected: string[] = [], now = new Date().toISOString();
   for (const input of inputs) {
     if (!isFactKey(input.key)) { rejected.push(String(input.key)); continue; }
     const value = normalizeFactValue(input.key, input.value);
     if (value === null) { rejected.push(input.key); continue; }
-    accepted.push({ key: input.key, value, source, updatedAt: now, note: input.note?.slice(0, 200) });
+    accepted.push({ key: input.key, value, source, updatedAt: now, note: input.note?.slice(0, 200), provenance: { ...input.provenance, revision: ctx.expectedRevision + 1, sourceTurnId: ctx.turnId ?? ctx.id } });
   }
-  if (accepted.length) await db(env).batch(accepted.map(fact => db(env).prepare("INSERT INTO user_facts (user_id, key, value_json, source, note, updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(user_id, key) DO UPDATE SET value_json = excluded.value_json, source = excluded.source, note = excluded.note, updated_at = excluded.updated_at").bind(userId, fact.key, JSON.stringify(fact.value), fact.source, fact.note ?? null, fact.updatedAt)));
+  if (accepted.length || remove.length) return atomic(env, userId, ctx, { accepted, rejected }, [...accepted.flatMap(fact => [
+    db(env).prepare("INSERT INTO user_facts (user_id, key, value_json, source, note, updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(user_id, key) DO UPDATE SET value_json = excluded.value_json, source = excluded.source, note = excluded.note, updated_at = excluded.updated_at").bind(userId, fact.key, JSON.stringify(fact.value), fact.source, fact.note ?? null, fact.updatedAt),
+    db(env).prepare("INSERT INTO fact_provenance(user_id,key,json) VALUES (?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET json=excluded.json").bind(userId, fact.key, JSON.stringify(fact.provenance)),
+  ]),...remove.flatMap(key=>[db(env).prepare('DELETE FROM user_facts WHERE user_id=? AND key=?').bind(userId,key),db(env).prepare('DELETE FROM fact_provenance WHERE user_id=? AND key=?').bind(userId,key)])]);
   return { accepted, rejected };
 }
 
-export async function deleteFacts(env: Env, userId: string, keys: FactKey[]): Promise<void> {
+export async function deleteFacts(env: Env, userId: string, keys: FactKey[], context?: MutationContext): Promise<void> {
   await ensureSchema(env);
-  if (keys.length) await db(env).batch(keys.map(key => db(env).prepare("DELETE FROM user_facts WHERE user_id = ? AND key = ?").bind(userId, key)));
+  const head = await getHead(env, userId);
+  if (keys.length) await atomic(env, userId, context ?? { id: crypto.randomUUID(), expectedRevision: head.revision, epoch: head.epoch }, { removed: keys }, keys.flatMap(key => [db(env).prepare("DELETE FROM user_facts WHERE user_id = ? AND key = ?").bind(userId, key), db(env).prepare("DELETE FROM fact_provenance WHERE user_id=? AND key=?").bind(userId,key)]));
 }
 
 // --- conversation -----------------------------------------------------------
@@ -167,10 +204,12 @@ export async function listMessages(env: Env, userId: string, limit = 40): Promis
   return (rows.results || []).map(row => ({ id: row.id, role: row.role, text: row.content, cards: parseJson<Card[]>(row.cards, []), suggestions: parseJson<string[]>(row.suggestions, []), meta: parseJson<Message["meta"]>(row.meta, {}), sourceIds: parseJson<string[]>(row.source_ids, []), mode: row.mode as Message["mode"], createdAt: row.created_at }));
 }
 
-export async function saveMessage(env: Env, userId: string, message: Message): Promise<void> {
+export async function saveMessage(env: Env, userId: string, message: Message, context?:MutationContext): Promise<void> {
   await ensureSchema(env);
-  await db(env).prepare("INSERT INTO conversation_turns (id, user_id, role, content, source_ids, mode, cards, suggestions, meta, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-    .bind(message.id, userId, message.role, message.text.slice(0, 12000), JSON.stringify(message.sourceIds ?? []), message.mode ?? "text", JSON.stringify(message.cards ?? []).slice(0, 60000), JSON.stringify(message.suggestions ?? []), JSON.stringify(message.meta ?? {}), message.createdAt).run();
+  const statement=db(env).prepare("INSERT OR IGNORE INTO conversation_turns (id, user_id, role, content, source_ids, mode, cards, suggestions, meta, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .bind(message.id, userId, message.role, message.text.slice(0, 12000), JSON.stringify(message.sourceIds ?? []), message.mode ?? "text", JSON.stringify(message.cards ?? []), JSON.stringify(message.suggestions ?? []), JSON.stringify(message.meta ?? {}), message.createdAt);
+  const head=await getHead(env,userId);
+  await atomic(env,userId,context??{id:`message:${message.id}`,expectedRevision:head.revision,epoch:head.epoch},{saved:message.id},[statement],false);
 }
 
 export async function deleteMessage(env: Env, userId: string, id: string): Promise<void> {
@@ -185,11 +224,12 @@ export async function listMemories(env: Env, userId: string): Promise<Memory[]> 
   const rows = await db(env).prepare("SELECT id, text, created_at FROM user_memories WHERE user_id = ? ORDER BY created_at ASC LIMIT 60").bind(userId).all<{ id: string; text: string; created_at: string }>();
   return (rows.results || []).map(row => ({ id: row.id, text: row.text, createdAt: row.created_at }));
 }
-export async function addMemory(env: Env, userId: string, text: string): Promise<Memory> {
+export async function addMemory(env: Env, userId: string, text: string, context?:MutationContext): Promise<Memory> {
   await ensureSchema(env);
   const memory: Memory = { id: crypto.randomUUID(), text: text.trim().slice(0, 300), createdAt: new Date().toISOString() };
-  await db(env).prepare("INSERT INTO user_memories (id, user_id, text, created_at) VALUES (?,?,?,?)").bind(memory.id, userId, memory.text, memory.createdAt).run();
-  return memory;
+  const head=await getHead(env,userId),previous=(await listMemories(env,userId)).find(m=>m.text.toLocaleLowerCase()===memory.text.toLocaleLowerCase());
+  if(previous)return previous;
+  return atomic(env,userId,context??{id:crypto.randomUUID(),expectedRevision:head.revision,epoch:head.epoch},memory,[db(env).prepare("INSERT INTO user_memories (id, user_id, text, created_at) VALUES (?,?,?,?)").bind(memory.id, userId, memory.text, memory.createdAt)]);
 }
 
 export async function listNextSteps(env: Env, userId: string): Promise<NextStep[]> {
@@ -197,11 +237,12 @@ export async function listNextSteps(env: Env, userId: string): Promise<NextStep[
   const rows = await db(env).prepare("SELECT id, text, done, created_at FROM user_next_steps WHERE user_id = ? ORDER BY done ASC, created_at ASC LIMIT 30").bind(userId).all<{ id: string; text: string; done: number; created_at: string }>();
   return (rows.results || []).map(row => ({ id: row.id, text: row.text, done: Boolean(row.done), createdAt: row.created_at }));
 }
-export async function addNextStep(env: Env, userId: string, text: string): Promise<NextStep> {
+export async function addNextStep(env: Env, userId: string, text: string, context?:MutationContext): Promise<NextStep> {
   await ensureSchema(env);
   const step: NextStep = { id: crypto.randomUUID(), text: text.trim().slice(0, 200), done: false, createdAt: new Date().toISOString() };
-  await db(env).prepare("INSERT INTO user_next_steps (id, user_id, text, done, created_at) VALUES (?,?,?,0,?)").bind(step.id, userId, step.text, step.createdAt).run();
-  return step;
+  const head=await getHead(env,userId),previous=(await listNextSteps(env,userId)).find(s=>s.text.toLocaleLowerCase()===step.text.toLocaleLowerCase());
+  if(previous)return previous;
+  return atomic(env,userId,context??{id:crypto.randomUUID(),expectedRevision:head.revision,epoch:head.epoch},step,[db(env).prepare("INSERT INTO user_next_steps (id, user_id, text, done, created_at) VALUES (?,?,?,0,?)").bind(step.id, userId, step.text, step.createdAt)]);
 }
 export async function setNextStepDone(env: Env, userId: string, id: string, done: boolean): Promise<void> {
   await ensureSchema(env);
@@ -220,9 +261,13 @@ export async function saveScenarioRun(env: Env, userId: string, kind: string, in
 }
 
 /** Removes everything the user has stored. Explicit user action only. */
-export async function resetUser(env: Env, userId: string): Promise<void> {
+export async function resetUser(env: Env, userId: string, context?:MutationContext): Promise<void> {
   await ensureSchema(env);
-  await db(env).batch(["user_profiles", "conversation_turns", "user_facts", "user_memories", "user_next_steps", "scenario_runs"].map(table => db(env).prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId)));
+  const head=await getHead(env,userId);
+  await atomic(env,userId,context??{id:crypto.randomUUID(),expectedRevision:head.revision,epoch:head.epoch},{reset:true},[
+    ...["user_profiles", "conversation_turns", "user_facts", "fact_provenance", "user_memories", "user_next_steps"].map(table => db(env).prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId)),
+    db(env).prepare("UPDATE household_heads SET epoch=epoch+1,active_turn='' WHERE user_id=?").bind(userId),
+  ]);
 }
 
 export type { Lang };

@@ -9,6 +9,10 @@ import { FACT_BY_KEY, factNumber, factText, parseAmount } from "@fintwin/engine"
 import type { FactKey, Lang, Picture } from "@fintwin/engine";
 import type { AppState, Message } from "@fintwin/contracts";
 import { runToolAndRefresh, type ToolContext } from "./tools";
+import { intake, type IntakeResult } from './intake';
+import { buildState } from './state';
+import { onboardingPrompt } from './onboarding';
+import { bankNarrative, bankQueryFromText, isBankQuestion, readBank } from './bank';
 
 export interface CompanionResult { text: string; suggestions: string[]; meta: NonNullable<Message["meta"]>; mode: "offline" | "policy" }
 
@@ -100,8 +104,10 @@ function firstRead(state: AppState, lang: Lang): string {
   const picture = state.picture, name = state.profile?.name;
   const netWorth = metricValue(picture, "net_worth"), free = metricValue(picture, "free_cashflow"), runway = metricValue(picture, "runway");
   const parts: string[] = [];
-  if (netWorth !== null) parts.push(t(lang, `${name ? name + ", " : ""}Ihr Nettovermögen liegt bei rund ${money(netWorth, lang)}.`, `${name ? name + ", " : ""}your net worth comes to about ${money(netWorth, lang)}.`));
-  if (free !== null) parts.push(free >= 0 ? t(lang, `Im Monat bleiben Ihnen ${money(free, lang)} frei.`, `Each month you have ${money(free, lang)} left over.`) : t(lang, `Im Monat fehlen Ihnen ${money(-free, lang)} – das sehen wir uns als Erstes an.`, `Each month you are short ${money(-free, lang)}, which is the first thing to look at.`));
+  if (netWorth !== null) parts.push(`${picture.metrics.find(m=>m.key==='net_worth')!.label[lang]}: ${money(netWorth,lang)}.`);
+  if (free !== null) parts.push(free >= 0 ? t(lang, `Vor Ihrer Sparrate bleiben monatlich ${money(free, lang)}.`, `Before committed saving, your monthly surplus is ${money(free, lang)}.`) : t(lang, `Im Monat fehlen Ihnen ${money(-free, lang)} – das sehen wir uns als Erstes an.`, `Each month you are short ${money(-free, lang)}, which is the first thing to look at.`));
+  const available=metricValue(picture,'available_after_saving');
+  if(available!==null)parts.push(t(lang,`Nach der Sparrate sind ${money(available,lang)} noch ungebunden.`,`After saving, ${money(available,lang)} remains unallocated.`));
   const attention = picture.insights.find(insight => insight.severity === "attention");
   const lead = attention ?? picture.insights[0];
   if (runway !== null && !lead?.id.startsWith("runway")) parts.push(t(lang, `Ihre Reserve reicht ${num(runway, lang)} Monate.`, `Your reserve covers ${num(runway, lang)} months.`));
@@ -166,88 +172,39 @@ export async function companionTurn(text: string, ctx: ToolContext, history: Mes
     return finish(t(lang, "Ein konkretes Produkt kann ich Ihnen nicht auswählen – und ich handle auch nichts für Sie. Was ich kann: Ihnen zeigen, worauf es bei der Entscheidung ankommt, etwa Kosten, Streuung, Zeithorizont und wie viel Sie wirklich entbehren können. Wenn Sie möchten, bereiten wir daraus Fragen für eine qualifizierte Beratung vor.", "I cannot pick a specific product for you, and I do not trade anything on your behalf. What I can do is show what the decision hinges on: costs, diversification, time horizon, and how much you can really set aside. If you like, we can turn that into questions for a qualified adviser."), [t(lang, "Worauf kommt es bei ETFs an?", "What matters when choosing ETFs?"), t(lang, "Wie viel kann ich monatlich anlegen?", "How much could I invest monthly?")], {}, "policy");
   }
 
-  // 1. New person: keep a useful goal mentioned before their name, then ask
-  // for the name once. A name is optional after sample data has been loaded.
-  if (!ctx.state.profile?.name && !ctx.state.profile?.onboardingDone) {
-    if (RX.sample.test(trimmed)) return loadSample(ctx, lang, finish);
-    const retirementTarget = extractRetirementTarget(trimmed);
-    if (retirementTarget !== null) {
-      const initialFacts: Array<{ key: FactKey; value: number | string }> = [];
-      if (!ctx.state.facts.goal_primary) initialFacts.push({ key: "goal_primary", value: t(lang, `Mit ${retirementTarget} in Rente gehen`, `Retire at ${retirementTarget}`) });
-      if (!ctx.state.facts.retirement_age) initialFacts.push({ key: "retirement_age", value: retirementTarget });
-      if (initialFacts.length) await runToolAndRefresh("set_facts", { facts: initialFacts }, ctx);
-    }
-    const name = extractName(trimmed);
-    if (!name) {
-      const alreadyIntroduced = history.some(message => message.role === "assistant");
-      const reply = retirementTarget !== null
-        ? t(lang, `Mit ${retirementTarget} in Rente zu gehen ist ein klares Ziel – das habe ich festgehalten. Wie darf ich Sie nennen?`, `Retiring at ${retirementTarget} is a clear goal, and I have saved it. What should I call you?`)
-        : alreadyIntroduced
-          ? t(lang, "Wie darf ich Sie nennen?", "What name should I use?")
-          : t(lang, "Hallo! Ich bin FinTwin, Ihr Begleiter für die eigenen Finanzen. Wie darf ich Sie nennen?", "Hi! I am FinTwin, your companion for your own money. What should I call you?");
-      return finish(reply, [t(lang, "Beispieldaten laden", "Load sample data")], { onboarding: true });
-    }
-    await runToolAndRefresh("set_name", { name }, ctx);
-    return nextQuestion(ctx, lang, skipped, finish, t(lang, `Freut mich, ${name}. Jede Antwort lässt sich später ändern.`, `Nice to meet you, ${name}. You can change any answer later.`));
+  const captured=ctx.intake ?? await prestore(text,ctx,history);
+  for(const key of captured.skipped)skipped.add(key);
+  if(captured.question)return finish(captured.question,[skipWords(lang)],{clarification:captured.clarification,onboarding:!ctx.state.profile?.onboardingDone});
+  const name=ctx.state.profile?.name??'';
+  const onboarding=!ctx.state.profile?.onboardingDone;
+  if(RX.sample.test(trimmed) && !RX.aboutMe.test(trimmed))return finish(t(lang,'Öffnen Sie den Beispielhaushalt über die Schaltfläche. Eigene Angaben werden dabei nicht unbemerkt ersetzt.','Open the sample household using the button. Your own figures will not be silently replaced.'),[]);
+  if(captured.stored.length || captured.removed.length || captured.name){
+    const correction=/no,|actually|correction|not |nein|korrektur|eigentlich|nicht /i.test(trimmed);
+    const acknowledgement=captured.stored.length?t(lang,correction?'Korrigiert.':'Gespeichert.',correction?'Updated.':'Saved.') : '';
+    const lead=[captured.name?t(lang, `Hallo ${captured.name}.`,`Hi ${captured.name}.`):'',acknowledgement,captured.removed.length?t(lang,'Die Angabe ist entfernt und wieder offen. Frühere Szenarien bleiben als veraltet gekennzeichnet.','That fact is removed and unknown again. Earlier scenarios remain marked as out of date.'):''].filter(Boolean).join(' ');
+    if(onboarding && !captured.removed.length)return nextQuestion(ctx,lang,skipped,finish,lead);
+    return finish(lead,insightSuggestions(ctx.state.picture,lang,2),{onboarding});
   }
+  if(RX.skip.test(trimmed))return nextQuestion(ctx,lang,skipped,finish,t(lang,'Das lassen wir offen.','We can leave that open.'));
 
-  // Sample profiles deliberately have no forced placeholder name. If the
-  // person later supplies one, remember it without restarting onboarding.
-  if (!ctx.state.profile?.name) {
-    const name = !/[\d?]/.test(trimmed) ? extractName(trimmed) : null;
-    if (name) {
-      await runToolAndRefresh("set_name", { name }, ctx);
-      return finish(t(lang, `Alles klar, ${name}. Womit möchten Sie weitermachen?`, `Got it, ${name}. What would you like to look at next?`), insightSuggestions(ctx.state.picture, lang));
-    }
-  }
-
-  const name = ctx.state.profile?.name ?? "";
-  const onboarding = !ctx.state.profile.onboardingDone;
-
-  // 2. Sample data at any time.
-  if (RX.sample.test(trimmed) && !RX.aboutMe.test(trimmed)) return loadSample(ctx, lang, finish);
-
-  // 3. Pending onboarding question: skip or answer.
-  if (pending) {
-    if (RX.skip.test(trimmed)) { skipped.add(pending); return nextQuestion(ctx, lang, skipped, finish, t(lang, "Kein Problem.", "No problem.")); }
-    if (/^(ja|yes|yep|yeah|correct|stimmt|genau|richtig)[.! ]*$/i.test(trimmed) && ctx.state.facts[pending]) {
-      return nextQuestion(ctx, lang, skipped, finish, t(lang, "Alles klar.", "Got it."));
-    }
-    const value = parseFactAnswer(pending, trimmed, lang, now);
-    const isQuestion = /\?$/.test(trimmed) || has(trimmed, RX.networth, RX.cashflow, RX.mortgage, RX.retirement, RX.help, RX.next, RX.million);
-    if (value !== null && !(isQuestion && FACT_BY_KEY[pending].type !== "text")) {
-      await runToolAndRefresh("set_facts", { facts: [{ key: pending, value }] }, ctx);
-      const reflection = reflectOnAnswer(pending, ctx.state, lang);
-      if (pending === "goal_primary" && /\b(million|mio)\b/i.test(trimmed)) { const amount = parseAmount(trimmed, lang); if (amount && amount >= 100000) await runToolAndRefresh("set_facts", { facts: [{ key: "goal_target_amount", value: amount }] }, ctx); }
-      return nextQuestion(ctx, lang, skipped, finish, reflection);
-    }
-    if (!isQuestion && FACT_BY_KEY[pending].type !== "text") {
-      const example = FACT_BY_KEY[pending].type === "age" ? "44" : FACT_BY_KEY[pending].type === "year_month" ? t(lang, "10/2027", "10/2027") : t(lang, "z. B. 3.200 oder 3,2k", "e.g. 3,200 or 3.2k");
-      return finish(t(lang, `Das habe ich nicht als Zahl verstanden. Eine grobe Schätzung reicht völlig – ${example} – oder Sie überspringen die Frage.`, `I could not read that as a number. A rough estimate is fine, ${example}, or just skip the question.`), questionSuggestions(pending, lang), { pendingFact: pending, onboarding });
-    }
-    // Fall through: the person asked something instead of answering. Answer, then resume.
-  }
-
-  // 4. Stated facts in free text ("I earn 4k", "mein Depot ist 20.000 wert").
-  const stated = detectStatedFacts(trimmed, lang, now);
-  if (stated.length) {
-    await runToolAndRefresh("set_facts", { facts: stated }, ctx);
-    const labels = stated.map(fact => FACT_BY_KEY[fact.key].label[lang].toLowerCase()).join(", ");
-    const reflection = stated.map(fact => reflectOnAnswer(fact.key, ctx.state, lang)).filter(Boolean).join(" ");
-    const lead = t(lang, `Aktualisiert: ${labels}. ${reflection}`, `Updated ${labels}. ${reflection}`);
-    if (onboarding) return nextQuestion(ctx, lang, skipped, finish, lead);
-    return finish(`${lead} ${t(lang, "Soll ich Ihnen zeigen, was sich dadurch im Bild verändert?", "Want me to show what that changes in your picture?")}`, [t(lang, "Ja, zeig mir mein Bild", "Yes, show my picture"), ...insightSuggestions(ctx.state.picture, lang, 2)]);
-  }
-
-  // 5. Questions and intents.
+  // Questions and intents never run a second fact writer.
   const resume = async (reply: string, suggestions: string[]): Promise<CompanionResult> => {
-    if (!onboarding) return finish(reply, suggestions);
-    const next = ONBOARDING.find(key => !ctx.state.facts[key] && !skipped.has(key) && questionApplies(key, ctx.state));
-    if (!next) { await runToolAndRefresh("finish_onboarding", {}, ctx); return finish(reply, suggestions); }
-    return finish(`${reply} ${t(lang, `Wenn Sie mögen, machen wir kurz weiter: ${FACT_BY_KEY[next].question[lang]}`, `If you like, let us carry on briefly: ${FACT_BY_KEY[next].question[lang]}`)}`, questionSuggestions(next, lang), { pendingFact: next, onboarding: true });
+    // Answer a question directly. Never append the entire onboarding checklist.
+    return finish(reply, suggestions, {onboarding});
   };
   const picture = ctx.state.picture, facts = ctx.state.facts;
   const n = (key: FactKey) => factNumber(facts, key);
+
+  const bankFollowup=/^(?:and|what about|how about|only|just|und|nur|wie sieht|was ist mit)\b/i.test(trimmed)&&lastAssistant?.cards.some(card=>card.type==='bank_trends');
+  if(isBankQuestion(trimmed)||bankFollowup){
+    if(!ctx.state.profile?.sampleLoaded)return finish(t(lang,'Ein echtes Bankkonto ist nicht verbunden. Laden Sie den Beispielhaushalt für sechs Monate synthetischer Buchungen und Diagramme.','No real bank account is connected. Load the sample household for six months of synthetic transactions and charts.'),[t(lang,'Beispieldaten laden','Load sample data')]);
+    const report=readBank(ctx.state,{...bankQueryFromText(trimmed,history)});
+    ctx.emitCard({type:'bank_trends',report});
+    if(report.query.category==='mortgage' && /trend|chart|graph|diagramm|verlauf/i.test(trimmed))await runToolAndRefresh('run_mortgage',{},ctx);
+    return finish(bankNarrative(report,lang),lang==='de'?['Und nur Lebensmittel?','Und im August?','Zeig meine Hypothekenentwicklung']:['What about groceries?','And in August?','Show my mortgage trends']);
+  }
+
+  if(onboarding&&(RX.greeting.test(trimmed)||/^(?:yes|yeah|yep|ja|okay|ok|sure|give name|name)$/i.test(trimmed)))return nextQuestion(ctx,lang,skipped,finish,'');
 
   if (RX.help.test(trimmed)) return resume(t(lang, `Ich bin ${name ? "für Sie, " + name + ", " : ""}eine Art Finanz-Gedächtnis mit Rechenkopf: Sie erzählen mir Ihre Zahlen, ich halte sie fest, rechne Nettovermögen, Cashflow, Reserve, Hypotheken- und Rentenszenarien durch und sage Ihnen ehrlich, was mir auffällt und was ich nicht weiß. Was ich nicht tue: Produkte empfehlen oder für Sie handeln.`, `Think of me as a financial memory with a calculator: you tell me your numbers, I keep them, work out net worth, cashflow, reserve, mortgage and retirement scenarios, and tell you honestly what stands out and what I do not know. What I do not do: recommend products or trade for you.`), [t(lang, "Wie steht mein Nettovermögen?", "What is my net worth?"), t(lang, "Was ist gerade wichtig?", "What matters right now?"), t(lang, "Beispieldaten laden", "Load sample data")]);
 
@@ -336,8 +293,7 @@ export async function companionTurn(text: string, ctx: ToolContext, history: Mes
   if (RX.adviser.test(trimmed)) {
     const points = picture.insights.slice(0, 3).map(insight => insight.title[lang]);
     const open = picture.openQuestions.slice(0, 3).map(question => question.label[lang].toLowerCase());
-    for (const point of points) await runToolAndRefresh("add_next_step", { text: t(lang, `Im Gespräch klären: ${point}`, `Discuss with adviser: ${point}`) }, ctx);
-    return resume(t(lang, `Für ein Beratungsgespräch würde ich drei Dinge mitnehmen: ${points.join("; ")}. Und Unterlagen zu dem, was ich noch nicht weiß: ${open.join(", ")}. Ich habe die Punkte als nächste Schritte notiert.`, `For an adviser conversation I would bring three things: ${points.join("; ")}. Plus documents for what I do not know yet: ${open.join(", ")}. I have noted them as next steps.`), [t(lang, "Welche Fragen sollte ich stellen?", "What questions should I ask?")]);
+    return resume(t(lang, `Für ein Beratungsgespräch bieten sich diese Themen an: ${points.join("; ")}. Noch offen sind ${open.join(", ")||'die Prüfung Ihrer Unterlagen'}. Unter „Gespräch vorbereiten“ können Sie den Überblick prüfen. Es wurden keine Schritte ohne Ihre Zustimmung vereinbart.`, `These look like useful meeting topics: ${points.join("; ")}. Still to clarify: ${open.join(", ")||'the supporting documents'}. You can review the brief under Prepare meeting. I haven’t marked any action as agreed without your confirmation.`), [t(lang, "Welche Fragen sollte ich stellen?", "What questions should I ask?")]);
   }
 
   if (RX.next.test(trimmed) || /^(ja|yes)[,!. ]*(zeig|show)/i.test(trimmed)) {
@@ -352,7 +308,7 @@ export async function companionTurn(text: string, ctx: ToolContext, history: Mes
 
   // 6. Fallback: be honest, reflect, offer the two most useful directions.
   await runToolAndRefresh("remember", { text: t(lang, `Hat angesprochen: "${trimmed.slice(0, 120)}"`, `Raised: "${trimmed.slice(0, 120)}"`) }, ctx);
-  return resume(t(lang, `Das nehme ich mit. Ohne Live-Modell kann ich dazu nichts Klügeres sagen, als was aus Ihren Zahlen folgt – und die zeigen vor allem ${picture.insights[0] ? picture.insights[0].title.de.charAt(0).toLowerCase() + picture.insights[0].title.de.slice(1) : "noch nicht viel, weil Grundzahlen fehlen"}.`, `I will keep that in mind. Without a live model I cannot say anything smarter than what follows from your numbers, and those mainly show ${picture.insights[0] ? picture.insights[0].title.en.charAt(0).toLowerCase() + picture.insights[0].title.en.slice(1) : "not much yet, because the basics are missing"}.`), [t(lang, "Was ist gerade wichtig?", "What matters right now?"), t(lang, "Wie steht mein Nettovermögen?", "What is my net worth?")]);
+  return resume(t(lang, 'Ich bin gerade im lokalen Modus. Ihre Angaben bleiben erhalten, und ich kann damit einfache Szenarien berechnen.', 'I’m in local mode right now. Your details are still here, and I can use them for the built-in calculations.'), [t(lang, "Was ist gerade wichtig?", "What matters right now?"), t(lang, "Wie steht mein Nettovermögen?", "What is my net worth?")]);
 }
 
 function questionApplies(key: FactKey, state: AppState): boolean {
@@ -362,11 +318,12 @@ function questionApplies(key: FactKey, state: AppState): boolean {
 }
 
 async function nextQuestion(ctx: ToolContext, lang: Lang, skipped: Set<FactKey>, finish: (reply: string, suggestions: string[], meta?: CompanionResult["meta"]) => CompanionResult, lead: string): Promise<CompanionResult> {
-  const next = ONBOARDING.find(key => !ctx.state.facts[key] && !skipped.has(key) && questionApplies(key, ctx.state));
-  if (next) return finish(askQuestion(next, lang, lead), questionSuggestions(next, lang), { pendingFact: next, onboarding: true });
+  const next=onboardingPrompt(ctx.state,lang,skipped);
+  if(next)return finish(`${lead} ${next.text}`,[skipWords(lang)],next.meta);
   await runToolAndRefresh("finish_onboarding", {}, ctx);
   ctx.emitCard({ type: "picture", metrics: ctx.state.picture.metrics.slice(0, 4) });
-  return finish(`${lead} ${t(lang, "Das reicht für ein erstes Bild.", "That is enough for a first picture.")} ${firstRead(ctx.state, lang)}`, insightSuggestions(ctx.state.picture, lang), { onboarding: false });
+  const free=metricValue(ctx.state.picture,'free_cashflow');
+  return finish(`${lead} ${t(lang,'Ihr erstes Bild ist bereit.','Your first picture is ready.')} ${free===null?t(lang,'Fehlende Angaben bleiben offen.','Missing details stay unknown.'):t(lang,`Monatlich ${free>=0?'übrig':'Fehlbetrag'}: ${money(Math.abs(free),lang)}, vor Sparraten.`,`Monthly ${free>=0?'surplus':'shortfall'}: ${money(Math.abs(free),lang)}, before saving.`)} ${t(lang,'Welches Szenario möchten Sie ansehen?','Which scenario would you like to explore?')}`, insightSuggestions(ctx.state.picture, lang), { onboarding: false });
 }
 
 async function loadSample(ctx: ToolContext, lang: Lang, finish: (reply: string, suggestions: string[], meta?: CompanionResult["meta"]) => CompanionResult): Promise<CompanionResult> {
@@ -449,32 +406,10 @@ function inferAskedFact(text: string, state: AppState): FactKey | null {
  * model call (a name, an answer to the fact the assistant just asked for, facts stated
  * in prose) and finishes onboarding once the basics are covered.
  */
-export async function prestore(text: string, ctx: ToolContext, history: Message[]): Promise<{ stored: Array<{ key: FactKey; value: number | string }>; name: string | null; skipped: FactKey[] }> {
-  const lang = ctx.lang, trimmed = text.trim();
-  const lastAssistant = [...history].reverse().find(message => message.role === "assistant");
-  const skipped = new Set<FactKey>(lastAssistant?.meta?.skipped ?? []);
-  const pending = lastAssistant?.meta?.pendingFact ?? null;
-  const stored: Array<{ key: FactKey; value: number | string }> = [];
-  let name: string | null = null;
-  const isQuestion = /\?\s*$/.test(trimmed) || has(trimmed, RX.networth, RX.cashflow, RX.mortgage, RX.retirement, RX.help, RX.next, RX.million, RX.portfolio);
-  if (RX.policy.test(trimmed) || RX.sample.test(trimmed)) return { stored, name, skipped: [...skipped] };
-  if (!ctx.state.profile?.name) {
-    const candidate = extractName(trimmed);
-    if (candidate && !/\d/.test(trimmed)) { await runToolAndRefresh("set_name", { name: candidate }, ctx); name = candidate; }
-  }
-  if (pending) {
-    if (RX.skip.test(trimmed)) skipped.add(pending);
-    else if (!isQuestion || FACT_BY_KEY[pending].type === "text") {
-      const value = parseFactAnswer(pending, trimmed, lang, ctx.now);
-      const bareAnswer = FACT_BY_KEY[pending].type === "text" ? !name : /^[^a-zA-Z]*$|^(keine|nein|nichts|none|no|nope|nothing|zero|null)\b|\d/i.test(trimmed);
-      if (value !== null && bareAnswer && !name) stored.push({ key: pending, value });
-    }
-  }
-  for (const fact of detectStatedFacts(trimmed, lang, ctx.now)) if (!stored.some(item => item.key === fact.key)) stored.push(fact);
-  if (stored.length) await runToolAndRefresh("set_facts", { facts: stored }, ctx);
-  if (!ctx.state.profile?.onboardingDone && ctx.state.profile?.name) {
-    const open = ONBOARDING.filter(key => !ctx.state.facts[key] && !skipped.has(key) && questionApplies(key, ctx.state));
-    if (!open.length) await runToolAndRefresh("finish_onboarding", {}, ctx);
-  }
-  return { stored, name, skipped: [...skipped] };
+export async function prestore(text:string,ctx:ToolContext,history:Message[]):Promise<IntakeResult>{
+  if(ctx.intake)return ctx.intake;
+  ctx.intake=await intake(text,ctx,history);
+  ctx.state=await buildState(ctx.env,ctx.userId);
+  ctx.emitState(ctx.state);
+  return ctx.intake;
 }

@@ -10,131 +10,92 @@ pinned: false
 
 # FinTwin
 
-FinTwin is a financial companion you talk to. It remembers what you tell it, works out
-what follows (net worth, cashflow, reserve, mortgage and retirement scenarios), tells you
-plainly what stands out and what it does not know, and lets you correct any fact in place.
+An independent, bilingual household companion for preparing an adviser meeting.
+Conversation → editable financial picture → a grounded what-if → a printable brief.
+The current build follows `docs/FinTwin_Codex_Master_Build_Spec.md`; it does not use the older Python service as its active backend.
 
-It is an independent prototype with no bank, broker or insurer connections. It does not
-provide financial, investment, insurance, tax or legal advice, and it never recommends
-products or executes anything.
+## Try it without keys or changing your saved household
 
-## How it works for the person using it
-
-1. **The conversation is the product.** A new person is onboarded in the chat, one short
-   question at a time (goal, age, income, spending, cash, investments, property, debt,
-   retirement age). Every answer becomes a fact and appears immediately in the picture
-   rail. Anything can be skipped, and "load sample data" fills a clearly labelled
-   synthetic household so the whole app can be explored in one tap.
-2. **Every number is derived, never invented.** Facts live in a typed registry
-   (`packages/engine`). The engine derives the picture, runs deterministic mortgage,
-   retirement and goal calculations, produces neutral insights and ranks the open
-   questions by how much they would change the picture.
-3. **The assistant acts through tools.** Whether the live model or the offline companion
-   is answering, it stores facts, runs scenarios, saves memories and next steps through
-   the same tool layer. Results appear as cards inside the thread and the picture updates
-   live over the same stream.
-4. **The picture is editable.** Any fact can be edited or removed on the Picture screen;
-   the edit shows up in the thread so the conversation and the data never diverge.
-5. **What-if planning is instant.** The Plan screen runs the same engine client-side with
-   sliders, and any scenario can be handed to the conversation in one click.
-6. **Voice.** Speech input uses the browser's recogniser (live interim text) with a
-   server transcription fallback; replies are spoken sentence by sentence as they stream
-   and stop when you start talking. Hands-free mode keeps listening after each answer.
-7. **German and English** are both first-class in the UI, the engine and the companion.
-
-## Architecture
-
-```text
-apps/web (Next.js 15, static export)
-  ├── Chat            streaming thread, cards, composer, voice
-  ├── Picture         rail + full editable fact view, sample portfolio
-  └── Plan            client-side what-if with the shared engine
-        │  JSON + server-sent events
-        ▼
-sites-worker/src (TypeScript, bundled with esbuild)
-  ├── index.ts        routes, viewer identity, CORS for local dev
-  ├── chat.ts         POST /v1/chat: live model loop (Groq, tools, streaming) or companion
-  ├── companion.ts    deterministic conversation engine (onboarding, intents, answers)
-  ├── tools.ts        set_facts, run_mortgage, run_retirement, run_goal, get_portfolio, ...
-  ├── state.ts        assembles profile + facts + picture + sample portfolio quotes
-  └── db.ts           per-user tables on the D1-style SQLite binding
-packages/engine       facts registry, picture derivation, calculators, parsing (pure)
-packages/contracts    API and event types shared by worker and web
-services/api          earlier FastAPI reference implementation of the spec (unchanged)
-```
-
-Without a model key the offline companion answers everything; with a key set the live model
-answers with the same tools and falls back to the companion if it fails.
-
-## Providers
-
-No single vendor is best at thinking, hearing and speaking, so each layer is chosen
-separately and degrades to the next option when a key is absent.
-
-| Layer | Preferred | Falls back to | Settings |
-| --- | --- | --- | --- |
-| Chat | any OpenAI-compatible endpoint | Groq | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_REASONING_EFFORT`, `LLM_MAX_TOKENS` |
-| Speech in | ElevenLabs Scribe | Groq Whisper large-v3, then browser | `ELEVENLABS_API_KEY`, `ELEVENLABS_STT_MODEL`, `GROQ_STT_MODEL` |
-| Speech out | ElevenLabs (multilingual) | Groq Orpheus (English only), then browser | `ELEVENLABS_API_KEY`, `ELEVENLABS_TTS_MODEL`, `ELEVENLABS_VOICE_ID` |
-
-`LLM_REASONING_EFFORT` accepts `low`, `medium` or `high` on models that support it
-(`gpt-oss`, `qwen3.6`, `qwen3.8`). Reasoning tokens are billed against `max_tokens`, so the
-budget is raised automatically with the effort level; setting `LLM_MAX_TOKENS` too low
-returns empty replies.
-
-Speech out is chunked to whatever the provider accepts, and the next chunk is fetched while
-the current one plays, so long answers are spoken without gaps. German has no Groq voice, so
-German speech uses the browser voice unless an ElevenLabs key is present.
-
-## Run locally
+Requirements: Node 24+ (native SQLite), Corepack / pnpm 11.19.0.
 
 ```bash
-pnpm install
-pnpm dev:all        # API on :8787 (SQLite in ./data/local.sqlite) + web on :3000
+corepack pnpm install --frozen-lockfile
+corepack pnpm demo
 ```
 
-Or in two terminals: `pnpm dev:api` and `pnpm dev`. The local API injects a signed-in
-viewer (`FINTWIN_VIEWER`, default `local-dev-user`); in production the hosting platform
-sets the `oai-authenticated-*` headers. Set `GROQ_API_KEY` in the environment to use the
-live model and server voice.
+Open **http://127.0.0.1:8787**. Enter **local-synthetic-demo-only**.
+This command builds the static app, starts the protected Node host on loopback, forces every provider off and uses an **in-memory database**. Stopping it discards this demonstration only. An existing `.env` or provider key cannot silently enable paid work in this command.
 
-## Host it
+Start a conversation or explore the frozen sample household. Switch EN/DE in the top bar. Edit a fact in Picture; use Plan to adjust a rate or extra repayment; click Ask FinTwin to discuss that exact saved snapshot; choose Prepare meeting to review and print the sourced brief.
 
-The `Dockerfile` runs the same Node server that serves the static app and the API on one
-origin (port 7860), with a per-browser cookie as identity and SQLite under `/data`. It is
-what the Hugging Face Space uses; set `GROQ_API_KEY` as a secret there for the live model.
-Storage on a free Space is ephemeral, so conversations reset when the Space restarts.
+## What changed
 
-## Check
+- A three-reply introduction: age/goal, income/spending, then cash/investments/debt. Names are optional; spoken English amounts, grouped answers and corrections share the durable intake path.
+- A clearly labelled synthetic bank connection: 119 reproducible transactions covering March–August 2026, with exact cents, balances, category/merchant filters and contextual follow-up questions.
+- Spending charts directly in chat, mortgage balance projections, a dedicated Bank explorer and a redesigned navy/cobalt workspace that also works on mobile and at 200% zoom.
+- One intake path across text and voice: canonical amounts, annual/net/gross/scope provenance, corrections, unknowns and removal.
+- One revisioned household. Guarded writes and immutable scenario IDs prevent old results replacing newer facts.
+- A reconciled synthetic household with frozen portfolio quotes. Surplus before saving is distinct from money remaining after committed saving.
+- Clean stream fallback, per-message origin and explicit voice lifecycle controls.
+- English/German adviser briefs and presenter preflight. Printing sends nothing to an adviser.
+- Server-issued HttpOnly demo sessions, origin checks, bounded requests and persistent provider reservations.
+
+## Voice and models: implemented, not yet live-audio verified
+
+Realtime uses browser WebRTC with a **Node-only authenticated server sideband**. No permanent provider key goes to the browser. The candidate defaults are `gpt-realtime-2.1` and `marin`; access, natural pauses, actual timbre and latency require authorized device testing. The feature defaults off. A successful configuration check is not an audio test.
+
+To configure a persistent protected host, copy `.env.example` to private `.env` and set `FINTWIN_DEMO_PASSPHRASE` to at least 12 characters. Keep paid use disabled until authorized.
 
 ```bash
-pnpm typecheck        # web + worker
-pnpm lint
-pnpm test:worker      # engine goldens and full offline conversations against SQLite
-pnpm test:e2e         # Playwright: onboarding, editing, scenarios, German, boundaries
-pnpm build:web        # static web export only
-pnpm build            # deployable dist/ with client assets + bundled worker
-pnpm build:site       # alias for the deployable build
+NEXT_PUBLIC_API_URL= corepack pnpm build
+corepack pnpm start:production
+corepack pnpm preflight
 ```
 
-## API
+Text routing: a complete `LLM_BASE_URL` / `LLM_API_KEY` / explicit `LLM_MODEL` configuration wins; invalid custom configuration fails closed. Otherwise `OPENAI_API_KEY` selects OpenAI (`OPENAI_CHAT_MODEL`, default `gpt-5.4`), with Groq (`GROQ_API_KEY` / `GROQ_CHAT_MODEL`) retained as an automatic text backup on provider failure. Backup replies are labelled and completed tools are not replayed. Budget or cancellation failures do not bypass controls through a backup. Key presence alone never activates a provider: `FINTWIN_ALLOW_PAID=1` is also required, and API billing must be funded separately.
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| GET | `/v1/state` | profile, facts, derived picture, sample portfolio, next steps, memories |
-| GET | `/v1/messages` | conversation history (adds a greeting when the thread is stale) |
-| POST | `/v1/chat` | one turn, streamed as `start`, `delta`, `card`, `state`, `done` events |
-| PATCH / DELETE | `/v1/facts` | edit or remove facts directly |
-| PATCH | `/v1/profile` | name, language, voice autoplay |
-| POST | `/v1/sample` | load the synthetic sample household |
-| POST/PATCH/DELETE | `/v1/next-steps` | agreed actions |
-| POST | `/v1/reset` | delete everything for the signed-in person |
-| POST | `/v1/voice/transcribe`, `/v1/voice/synthesize` | speech in / out |
-| GET | `/health` | which provider serves each layer, and whether the model is live |
+OpenAI also takes priority for transcription (`gpt-4o-mini-transcribe`) and chained speech (`gpt-4o-mini-tts`, Marin in English/German). Realtime uses `gpt-realtime-2.1` / Marin. Voices are never silently switched during a failed utterance. A missing-credit error links to API billing; the app never purchases credits. Groq speech settings remain available when OpenAI is not configured, with the existing English-only/terms restrictions.
 
-## Boundaries
+Voice modes: `FINTWIN_VOICE_MODE=text` (default), `chained` (configured STT/TTS or clearly separate system voice), or `realtime` (requires `OPENAI_API_KEY` plus the Node runtime). Realtime includes microphone selection, mute, interruption, hold-to-talk and End voice. If macOS selects your phone, choose the laptop input; FinTwin does not modify your OS settings. See the [runbook](docs/DEMO_RUNBOOK.md) before any live test.
 
-The companion explains criteria and prepares questions; it does not pick products, rank
-providers, execute trades, promise returns or give binding tax, legal or credit
-conclusions. Sample data is synthetic and always labelled. Model results are labelled as
-model calculations, not forecasts.
+## Verification
+
+```bash
+corepack pnpm --filter @fintwin/web exec playwright install chromium
+NEXT_PUBLIC_API_URL= corepack pnpm verify
+# Individual checks
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test:worker
+corepack pnpm test:web
+corepack pnpm test:e2e
+```
+
+`verify` runs actual unit/regression/browser tests and both builds. Browser tests use built static assets with the real Node/SQLite adapter; all provider traffic is disabled. Mocked Realtime tests are labelled as mocks.
+
+`pnpm smoke:live` **refuses to run** without `--allow-paid`. Only with owner approval and a privately configured host, `pnpm smoke:live --allow-paid` runs one synthetic **text-only** turn, checking actual live origin. It records sanitized status at `data/last-text-smoke.json`, never a transcript/key. It is not part of verify, startup or build; it does not verify voice.
+
+## Architecture and storage
+
+| Layer | Responsibility |
+| --- | --- |
+| `apps/web` | Existing Next static UI; chat, Picture, Plan, Brief, voice controls |
+| `packages/engine` / `packages/contracts` | Pure deterministic calculations and shared canonical types |
+| `sites-worker/src/intake.ts`, `application.ts`, `tools.ts` | Shared semantic validation, guarded mutation, immutable snapshots, brief assembly |
+| `sites-worker/src/chat.ts` / `realtime-bridge.ts` | Text and voice adapters to the same application layer and policy |
+| `scripts/dev-api.mjs`, `sqlite.mjs`, `realtime.mjs` | Single-origin Node host, startup migrations, transactional SQLite, Realtime sideband |
+| `services/api` | Earlier reference implementation; preserved, not used by this UI |
+
+Node startup journals generated migrations and backs up an existing database beside the file before upgrading it. No runtime request handler creates schema. Migration `0003_hot_pride.sql` is additive. The startup adapter also imports the historical metadata-column gap in migration 0002. The existing private Sites database's legacy profile/message columns were verified through its read-only schema view on 13 September 2026. Verified Sites gateway identity retains the original user key, preserving saved household ownership. The worker build has no Node/WebSocket dependency and reports Realtime unavailable.
+
+`Reset sample` replaces only this session's synthetic household. A user-reported household cannot be replaced by the sample button. Reset clears active personal facts/messages/preferences, while immutable historical snapshots and usage reservations remain as auditable history. It is **not** an account-erasure/compliance endpoint. Sessions expire after 12 hours; this passphrase gate is not a complete account/SSO system.
+
+## Hosting boundary
+
+The Dockerfile is prepared for the same host on port 7860. Configure a persistent `/data` volume, a private passphrase, TLS and `FINTWIN_PUBLIC_ORIGIN` (exact public origin). Keep one Node process per SQLite file; the sideband is process-owned. Standalone strips forged platform/device identity headers. Do not expose the Node port behind an unverified gateway or use real client records.
+
+Docker build/run and any public rollout remain unverified in this environment: the Docker daemon was not running. The static + Node route is covered by the browser suite. See [implementation evidence](docs/IMPLEMENTATION_REPORT.md) and [build progress](docs/BUILD_PROGRESS.md) for precise status and limitations.
+
+## Scope
+
+Synthetic demonstration and independent adviser preparation, with no DVAG affiliation. No live bank/broker connections, product ranking, suitability verdict, execution, regulated advice record or legal/tax conclusion. Frozen portfolio prices are never presented as live. Model projections are illustrative, not forecasts or guarantees. Provider reservations are conservative allowances, **not an invoice-level billing guarantee**. Retain a provider-side spending cap as well.

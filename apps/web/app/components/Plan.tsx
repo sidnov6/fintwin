@@ -1,95 +1,62 @@
 "use client";
-import { useMemo, useState } from "react";
-import { Flag, Landmark, TrendingUp } from "lucide-react";
-import type { AppState, Lang, Message } from "@fintwin/contracts";
-import { factNumber, goal, mortgage, retirement } from "@fintwin/engine";
-import { api } from "../lib/api";
-import { money, pct, yearMonth } from "../lib/format";
-import { copy } from "../lib/i18n";
-
-interface PlanProps { state: AppState; lang: Lang; applyState(state: AppState): void; send(text: string): void; toast(text: string): void; addMessage(message: Message): void }
-type Tab = "mortgage" | "retirement" | "goal";
-
-export function PlanView({ state, lang, applyState, send, toast, addMessage }: PlanProps) {
-  const t = copy(lang).plan;
-  const facts = state.facts;
-  const n = (key: Parameters<typeof factNumber>[1]) => factNumber(facts, key);
-  const [tab, setTab] = useState<Tab>(n("mortgage_balance") ? "mortgage" : "retirement");
-
-  // Mortgage
-  const [principal, setPrincipal] = useState(n("mortgage_balance") ?? 240000);
-  const [years, setYears] = useState(Math.round((n("mortgage_remaining_months") ?? 240) / 12));
-  const [rate, setRate] = useState(n("mortgage_rate_pct") ?? 4);
-  const [special, setSpecial] = useState(0);
-  const mortgageResult = useMemo(() => mortgage(principal, rate, years * 12, special), [principal, rate, years, special]);
-  const baseline = useMemo(() => [4, 5, 6].map(item => mortgage(principal, item, years * 12)), [principal, years]);
-  const currentPayment = n("mortgage_payment_monthly");
-
-  // Retirement
-  const age = n("age");
-  const [retireAt, setRetireAt] = useState(n("retirement_age") ?? 65);
-  const [investing, setInvesting] = useState(n("monthly_saving") ?? Math.max(0, (n("income_net_monthly") ?? 0) - (n("expenses_monthly") ?? 0)));
-  const [spending, setSpending] = useState(n("retirement_spending_monthly") ?? 3000);
-  const [pension, setPension] = useState(n("expected_pension_monthly") ?? 0);
-  const [returnPct, setReturnPct] = useState(5);
-  const retirementResult = useMemo(() => age === null ? null : retirement({ currentAssets: (n("investments_value") ?? 0) + (n("retirement_assets") ?? 0), monthlyContribution: investing, years: retireAt - age, annualReturnPct: returnPct, expectedPensionMonthly: pension, targetSpendingMonthly: spending }), [age, retireAt, investing, spending, pension, returnPct, facts]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Goal
-  const [target, setTarget] = useState(n("goal_target_amount") ?? 100000);
-  const [goalMonthly, setGoalMonthly] = useState(investing);
-  const start = (n("cash_liquid") ?? 0) + (n("investments_value") ?? 0);
-  const goalResult = useMemo(() => goal(target, start, goalMonthly, 4, new Date()), [target, start, goalMonthly]);
-
-  async function saveFacts(facts: Array<{ key: Parameters<typeof factNumber>[1]; value: number }>) { const result = await api.patchFacts(facts); applyState(result.state); if (result.message) addMessage(result.message); toast(copy(lang).save); }
-
-  return <div className="page">
-    <div className="page-head"><div><h1>{t.title}</h1><p className="lead">{lang === "de" ? "Regler bewegen, sofort sehen, was passiert. Alles bleibt eine Modellrechnung – und FinTwin kann jedes Szenario mit Ihnen besprechen." : "Move the sliders and see what happens instantly. Everything stays a model, and FinTwin can talk any scenario through with you."}</p></div>
-      <div className="plan-tabs" role="tablist"><button role="tab" aria-selected={tab === "mortgage"} className={tab === "mortgage" ? "active" : ""} onClick={() => setTab("mortgage")}><Landmark />{t.mortgage}</button><button role="tab" aria-selected={tab === "retirement"} className={tab === "retirement" ? "active" : ""} onClick={() => setTab("retirement")}><TrendingUp />{t.retirement}</button><button role="tab" aria-selected={tab === "goal"} className={tab === "goal" ? "active" : ""} onClick={() => setTab("goal")}><Flag />{t.goal}</button></div></div>
-
-    {tab === "mortgage" && <div className="grid-2">
-      <section className="panel">
-        <div className="slider"><label>{t.balance}<b className="num">{money(principal, lang)}</b></label><input type="range" min={20000} max={1000000} step={5000} value={principal} onChange={event => setPrincipal(Number(event.target.value))} aria-label={t.balance} /></div>
-        <div className="slider"><label>{t.term}<b className="num">{years} {t.years}</b></label><input type="range" min={5} max={35} value={years} onChange={event => setYears(Number(event.target.value))} aria-label={t.term} /></div>
-        <div className="slider"><label>{t.rate}<b className="num">{pct(rate, lang, 2)}</b></label><input type="range" min={0.5} max={9} step={0.05} value={rate} onChange={event => setRate(Number(event.target.value))} aria-label={t.rate} /></div>
-        <div className="slider"><label>{lang === "de" ? "Sondertilgung / Monat" : "Extra repayment / month"}<b className="num">{money(special, lang)}</b></label><input type="range" min={0} max={2000} step={50} value={special} onChange={event => setSpecial(Number(event.target.value))} /></div>
-        <div className="field-actions"><button className="btn sm ghost" onClick={() => void saveFacts([{ key: "mortgage_balance", value: principal }, { key: "mortgage_remaining_months", value: years * 12 }, { key: "mortgage_rate_pct", value: rate }])}>{t.saveFacts}</button><button className="btn sm primary" onClick={() => send(lang === "de" ? `Was bedeutet ein Zins von ${rate.toFixed(2).replace(".", ",")} % bei ${money(principal, lang)} Restschuld über ${years} Jahre für mich?` : `What does a ${rate.toFixed(2)}% rate on ${money(principal, lang)} over ${years} years mean for me?`)}>{t.ask}</button></div>
-      </section>
-      <section className="panel">
-        <div className="result-big"><small>{t.payment} · {pct(rate, lang, 2)}</small><strong className="num">{money(mortgageResult.payment + special, lang, 2)}</strong><em>{currentPayment !== null ? `${t.current}: ${money(currentPayment, lang)} → ${mortgageResult.payment + special - currentPayment >= 0 ? "+" : "−"}${money(Math.abs(mortgageResult.payment + special - currentPayment), lang)}` : `${t.interest}: ${money(mortgageResult.totalInterest, lang)}`}{special > 0 ? ` · ${lang === "de" ? "abbezahlt in" : "paid off in"} ${Math.round(mortgageResult.payoffMonths / 12 * 10) / 10} ${t.years}` : ""}</em></div>
-        <div className="rates">{baseline.map(item => <div className={Math.abs(item.annualRatePct - rate) < 0.5 ? "focus" : ""} key={item.annualRatePct}><span>{pct(item.annualRatePct, lang, 0)}</span><b className="num">{money(item.payment, lang, 0)}</b><span className="num">{money(item.totalInterest, lang)} {lang === "de" ? "Zinsen" : "interest"}</span></div>)}</div>
-        <p className="note">{t.model}</p>
-      </section>
-    </div>}
-
-    {tab === "retirement" && (age === null ? <div className="banner"><span>{t.needs} {lang === "de" ? "Alter" : "age"}.</span><button className="btn sm" style={{ marginLeft: "auto" }} onClick={() => send(lang === "de" ? "Ich möchte meine Rente planen." : "I want to plan my retirement.")}>{t.ask}</button></div>
-      : <div className="grid-2">
-        <section className="panel">
-          <div className="slider"><label>{t.retireAt}<b className="num">{retireAt}</b></label><input type="range" min={Math.max(age + 1, 50)} max={75} value={retireAt} onChange={event => setRetireAt(Number(event.target.value))} aria-label={t.retireAt} /></div>
-          <div className="slider"><label>{t.investing}<b className="num">{money(investing, lang)}</b></label><input type="range" min={0} max={5000} step={50} value={investing} onChange={event => setInvesting(Number(event.target.value))} aria-label={t.investing} /></div>
-          <div className="slider"><label>{t.spending}<b className="num">{money(spending, lang)}</b></label><input type="range" min={500} max={10000} step={100} value={spending} onChange={event => setSpending(Number(event.target.value))} aria-label={t.spending} /></div>
-          <div className="slider"><label>{t.pension}<b className="num">{money(pension, lang)}</b></label><input type="range" min={0} max={5000} step={50} value={pension} onChange={event => setPension(Number(event.target.value))} aria-label={t.pension} /></div>
-          <div className="slider"><label>{lang === "de" ? "Rendite p. a." : "Return p.a."}<b className="num">{pct(returnPct, lang)}</b></label><input type="range" min={1} max={9} step={0.5} value={returnPct} onChange={event => setReturnPct(Number(event.target.value))} /></div>
-          <div className="field-actions"><button className="btn sm ghost" onClick={() => void saveFacts([{ key: "retirement_age", value: retireAt }, { key: "monthly_saving", value: investing }, { key: "retirement_spending_monthly", value: spending }, ...(pension > 0 ? [{ key: "expected_pension_monthly" as const, value: pension }] : [])])}>{t.saveFacts}</button><button className="btn sm primary" onClick={() => send(lang === "de" ? `Wie sieht meine Rente mit ${retireAt} aus, wenn ich ${money(investing, lang)} im Monat anlege und ${money(spending, lang)} im Monat brauche?` : `What does retiring at ${retireAt} look like if I invest ${money(investing, lang)} a month and need ${money(spending, lang)} a month?`)}>{t.ask}</button></div>
-        </section>
-        {retirementResult && <section className="panel">
-          <div className="ring" style={{ background: `conic-gradient(var(--accent) 0 ${Math.min(100, (retirementResult.readinessRatio ?? 0) * 100)}%, var(--surface-3) ${Math.min(100, (retirementResult.readinessRatio ?? 0) * 100)}%)` }}><span className="num">{pct(Math.min(999, (retirementResult.readinessRatio ?? 0) * 100), lang, 0)}</span></div>
-          <div className="metric-grid"><div className="metric"><small>{t.projected}</small><strong className="num">{money(retirementResult.projectedReal, lang)}</strong><em>{retirementResult.input.years} {t.years}</em></div><div className="metric"><small>{t.required}</small><strong className="num">{money(retirementResult.requiredCapital ?? 0, lang)}</strong><em>{lang === "de" ? "bei 4 % Entnahme" : "at 4% withdrawal"}</em></div><div className="metric"><small>{t.sustainable}</small><strong className="num">{money(retirementResult.sustainableMonthlyReal, lang)}</strong></div><div className="metric"><small>{lang === "de" ? "Lücke pro Monat" : "Gap per month"}</small><strong className="num">{money(retirementResult.gapMonthly ?? 0, lang)}</strong></div></div>
-          <p className="note">{lang === "de" ? `${returnPct} % Rendite, 0,5 % Kosten, 2 % Inflation, heutige Kaufkraft.` : `${returnPct}% return, 0.5% fees, 2% inflation, today's purchasing power.`} {t.model}</p>
-        </section>}
-      </div>)}
-
-    {tab === "goal" && <div className="grid-2">
-      <section className="panel">
-        <div className="field"><label htmlFor="goal-target">{t.target}</label><div className="input"><b>€</b><input id="goal-target" type="text" inputMode="numeric" value={target} onChange={event => setTarget(Number(event.target.value.replace(/[^\d]/g, "")) || 0)} /></div></div>
-        <div className="slider"><label>{t.investing}<b className="num">{money(goalMonthly, lang)}</b></label><input type="range" min={0} max={5000} step={50} value={goalMonthly} onChange={event => setGoalMonthly(Number(event.target.value))} aria-label={t.investing} /></div>
-        <p className="note">{lang === "de" ? `Start: ${money(start, lang)} (Guthaben + Depot), 4 % Rendite. Immobilie zählt nicht mit.` : `Start: ${money(start, lang)} (cash + investments), 4% return. Property is excluded.`}</p>
-        <div className="field-actions"><button className="btn sm ghost" onClick={() => void saveFacts([{ key: "goal_target_amount", value: target }, { key: "monthly_saving", value: goalMonthly }])}>{t.saveFacts}</button><button className="btn sm primary" onClick={() => send(lang === "de" ? `Wann erreiche ich ${money(target, lang)}, wenn ich ${money(goalMonthly, lang)} im Monat anlege?` : `When will I reach ${money(target, lang)} if I invest ${money(goalMonthly, lang)} a month?`)}>{t.ask}</button></div>
-      </section>
-      <section className="panel">
-        <div className="result-big"><small>{t.reached}</small><strong className="num">{goalResult.reachedYearMonth ? yearMonth(goalResult.reachedYearMonth, lang) : t.never}</strong><em>{goalResult.months !== null ? `${Math.round(goalResult.months / 12)} ${t.years}` : ""}</em></div>
-        <div className="mini-table">{goalResult.requiredMonthlyForYears.map(item => <div className="mini-row" key={item.years}><span>{t.needFor(item.years)}</span><b className="num">{money(item.monthly, lang)}</b><small>/ {lang === "de" ? "Monat" : "month"}</small></div>)}</div>
-        <p className="note">{t.model}</p>
-      </section>
-    </div>}
-  </div>;
+import {useEffect,useMemo,useRef,useState} from 'react';
+import {Flag,Landmark,TrendingUp} from 'lucide-react';
+import type {AppState,FactKey,Lang,Message,ScenarioSnapshot} from '@fintwin/contracts';
+import {factNumber,goal,mortgage,parseLocalizedNumber,retirement} from '@fintwin/engine';
+import {api} from '../lib/api';
+import {scenarioLabel,scenarioName} from '../lib/scenarios';
+import {ScenarioView} from './Scenario';
+import {money} from '../lib/format';
+interface PlanProps{state:AppState;lang:Lang;applyState(state:AppState):void;send(text:string,scenarioId?:string):void;toast(text:string):void;addMessage(message:Message):void;onSelect?(id:string):void;onBrief?():void}
+type Kind=ScenarioSnapshot['kind'];
+function defaults(state:AppState,kind:Kind){
+  const n=(key:FactKey)=>factNumber(state.facts,key),assets=n('investments_value')!==null&&n('retirement_assets')!==null?n('investments_value')!+n('retirement_assets')!:null;
+  if(kind==='mortgage')return{principal:n('mortgage_balance'),rate_pct:n('mortgage_rate_pct'),months:n('mortgage_remaining_months'),special_repayment_monthly:0};
+  if(kind==='retirement')return{age:n('age'),retirement_age:n('retirement_age'),current_assets:assets,monthly_contribution:n('monthly_saving'),pension_monthly:n('expected_pension_monthly'),spending_monthly:n('retirement_spending_monthly'),annual_return_pct:5,annual_fee_pct:0.5,inflation_pct:2,withdrawal_rate_pct:4};
+  return{target_amount:n('goal_target_amount'),start:n('cash_liquid')!==null&&n('investments_value')!==null?n('cash_liquid')!+n('investments_value')!:null,monthly:n('monthly_saving'),annual_return_pct:4};
+}
+export function PlanView(props:PlanProps){
+  const [kind,setKind]=useState<Kind>(props.state.facts.mortgage_balance?'mortgage':'retirement');
+  return <div className="page"><div className="page-head"><div><span className="eyebrow">{props.lang==='de'?'Eine Änderung. Ein nachvollziehbarer Vergleich.':'One change. One clear comparison.'}</span><h1>{props.lang==='de'?'Was wäre, wenn …':'What if …'}</h1><p className="lead">{props.lang==='de'?'Erkunden Sie eine Alternative. Ihre Angaben bleiben unverändert, bis Sie sie ausdrücklich übernehmen.':'Explore an alternative. Your facts stay unchanged unless you explicitly apply it.'}</p></div></div><div className="plan-tabs" role="tablist" aria-label={props.lang==='de'?'Szenarioart':'Scenario type'}>{(['mortgage','retirement','goal'] as Kind[]).map(k=>{const Icon=k==='mortgage'?Landmark:k==='retirement'?TrendingUp:Flag;return <button key={k} role="tab" aria-selected={k===kind} className={k===kind?'active':''} onClick={()=>setKind(k)}><Icon/>{scenarioName(k,props.lang)}</button>;})}</div>{(['mortgage','retirement','goal'] as Kind[]).map(k=><div key={`${k}:${props.state.epoch}`} hidden={kind!==k}><Planner {...props} kind={k}/></div>)}</div>;
+}
+function Planner({state,lang,kind,applyState,send,toast,addMessage,onSelect,onBrief}:PlanProps&{kind:Kind}){
+  const de=lang==='de',f=(v:number|null|undefined)=>v==null?'':new Intl.NumberFormat(de?'de-DE':'en-GB',{useGrouping:false,maximumFractionDigits:2}).format(v);
+  const makeFields=()=>Object.fromEntries(Object.entries(defaults(state,kind)).map(([k,v])=>[k,f(v)]));
+  const [fields,setFields]=useState<Record<string,string>>(makeFields),[revision,setRevision]=useState(state.revision),[dirty,setDirty]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false),[snapshot,setSnapshot]=useState<ScenarioSnapshot|null>(state.scenarios.find(s=>s.kind===kind)??null);
+  const changed=revision!==state.revision;
+  const fieldLanguage=useRef(lang);
+  useEffect(()=>{if(fieldLanguage.current===lang)return;const previous=fieldLanguage.current;fieldLanguage.current=lang;setFields(current=>Object.fromEntries(Object.entries(current).map(([k,v])=>{const n=parseLocalizedNumber(v,previous);return[k,n===null?v:new Intl.NumberFormat(lang==='de'?'de-DE':'en-GB',{useGrouping:false,maximumFractionDigits:2}).format(n)];})));},[lang]);
+  useEffect(()=>{if(!dirty)return;const prevent=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',prevent);return()=>window.removeEventListener('beforeunload',prevent);},[dirty]);
+  const canonical=Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,parseLocalizedNumber(v,lang)]));
+  const valid=Object.values(canonical).every(v=>v!==null);
+  const inputs=canonical as Record<string,number>;
+  const preview=useMemo(()=>{
+    if(!valid||changed)return null;
+    try{
+      if(kind==='mortgage'){const r=mortgage(inputs.principal,inputs.rate_pct,inputs.months,inputs.special_repayment_monthly);return money(r.payment+r.specialRepayment,lang,2);}
+      if(kind==='retirement'){const r=retirement({currentAssets:inputs.current_assets,monthlyContribution:inputs.monthly_contribution,years:inputs.retirement_age-inputs.age,annualReturnPct:inputs.annual_return_pct,annualFeePct:inputs.annual_fee_pct,inflationPct:inputs.inflation_pct,withdrawalRatePct:inputs.withdrawal_rate_pct,expectedPensionMonthly:inputs.pension_monthly,targetSpendingMonthly:inputs.spending_monthly});return money(r.projectedReal,lang);}
+      return goal(inputs.target_amount,inputs.start,inputs.monthly,inputs.annual_return_pct,new Date(state.picture.asOf)).reachedYearMonth??(de?'Ziel nicht erreicht':'Target not reached');
+    }catch{return null;}
+  },[fields,kind,lang,valid,changed,state.picture.asOf]); // eslint-disable-line react-hooks/exhaustive-deps
+  function rebase(){if(dirty&&!window.confirm(de?'Ungespeicherte Szenarioeingaben durch Ihre aktuellen Angaben ersetzen?':'Replace unsaved scenario inputs with your current facts?'))return;setFields(makeFields());setRevision(state.revision);setDirty(false);setSnapshot(null);setError('');}
+  async function calculate(ask=false){
+    setBusy(true);setError('');
+    try{const result=await api.createScenario(kind,inputs,revision);setSnapshot(result.snapshot);setDirty(false);applyState(result.state);onSelect?.(result.snapshot.id);if(ask)send(de?'Was bedeutet dieses Szenario für mein Ziel?':'What does this scenario mean for my goal?',result.snapshot.id);}
+    catch(e){setError(e instanceof Error?e.message:'Calculation unavailable.');}finally{setBusy(false);}
+  }
+  async function apply(){
+    if(!window.confirm(de?'Diese Szenariowerte ausdrücklich als Ihre neuen Angaben übernehmen?':'Explicitly apply these scenario values as your new facts?'))return;
+    const mapping:Record<string,FactKey>={principal:'mortgage_balance',rate_pct:'mortgage_rate_pct',months:'mortgage_remaining_months',retirement_age:'retirement_age',monthly_contribution:'monthly_saving',pension_monthly:'expected_pension_monthly',spending_monthly:'retirement_spending_monthly',target_amount:'goal_target_amount',monthly:'monthly_saving'};
+    setBusy(true);try{const result=await api.patchFacts(Object.entries(inputs).filter(([k])=>mapping[k]).map(([k,value])=>({key:mapping[k],value})),revision);if(result.rejected.length)throw new Error(de?'Einige Werte wurden nicht übernommen.':'Some values could not be applied.');applyState(result.state);setRevision(result.state.revision);setSnapshot(null);setDirty(false);if(result.message)addMessage(result.message);toast(de?'Ihre Angaben wurden aktualisiert.':'Your facts were updated.');}catch(e){setError(String((e as Error).message));}finally{setBusy(false);}
+  }
+  return <><div className="scenario-context"><span>{de?'Haushaltsversion':'Household revision'} {revision}</span><span>{de?'Beträge in EUR · ausdrücklich hypothetisch':'Amounts in EUR · explicitly hypothetical'}</span></div>
+    {changed&&<div className="banner"><span>{de?'Ihr Haushaltsbild hat sich geändert. Vor der nächsten Berechnung aktualisieren.':'Your household picture changed. Refresh the inputs before calculating.'}</span><button className="btn sm" onClick={rebase}>{de?'Aktuelle Angaben laden':'Load current facts'}</button></div>}
+    <div className="grid-2"><section className="panel"><h3>{de?'Ihre Alternative':'Your alternative'}</h3><div className="scenario-fields">{Object.entries(fields).map(([key,value])=><div className="field" key={key}><label htmlFor={`scenario-${kind}-${key}`}>{scenarioLabel(key,lang)}</label><div className="input"><input id={`scenario-${kind}-${key}`} inputMode="decimal" value={value} placeholder={de?'Nicht angegeben':'Not provided'} onChange={e=>{setFields({...fields,[key]:e.target.value});setDirty(true);}}/></div>{kind==='mortgage'&&['rate_pct','special_repayment_monthly'].includes(key)&&<input type="range" aria-label={`${scenarioLabel(key,lang)} ${de?'Schieberegler':'slider'}`} min="0" max={key==='rate_pct'?10:1000} step={key==='rate_pct'?0.05:25} value={canonical[key]??0} onChange={e=>{setFields({...fields,[key]:f(Number(e.target.value))});setDirty(true);}}/>}</div>)}</div>
+    {kind==='retirement'&&state.facts.expected_pension_monthly===undefined&&<p className="note">{de?'Rente unbekannt. Tragen Sie für ein bewusstes Null-Renten-Szenario 0 ein; dies ändert Ihre persönlichen Angaben nicht.':'Pension is unknown. Enter 0 to explore an explicit zero-pension scenario; this does not change your facts.'}</p>}
+    {!valid&&<p className="note">{de?'Fehlende Angaben bleiben offen. Ergänzen Sie die Eingaben, bevor Sie dieses Szenario besprechen.':'Missing information stays unknown. Complete the inputs before discussing this scenario.'}</p>}
+    <div className="field-actions"><button className="btn primary" disabled={!preview||changed||busy} onClick={()=>void calculate(true)}>{de?'Mit FinTwin besprechen':'Ask FinTwin'}</button><button className="btn" disabled={!preview||changed||busy} onClick={()=>void calculate()}>{de?'Szenario speichern':'Save scenario'}</button></div><button className="btn sm ghost" disabled={!preview||changed||busy} onClick={()=>void apply()}>{de?'Als meine Angaben übernehmen':'Apply to my facts'}</button>
+    {error&&<p className="error-line" role="alert">{error}</p>}</section>
+    <section><div className="panel result-big"><small>{de?'Lokale Vorschau':'Local preview'} · {kind==='mortgage'?(de?'Monatsrate inklusive Zusatztilgung':'Monthly payment including extra'):kind==='retirement'?(de?'Kapital in heutiger Kaufkraft':'Capital in today’s purchasing power'):(de?'Zielzeitpunkt':'Target date')}</small><strong className="num">{preview??'—'}</strong><p className="note">{de?'Gespeicherte Ergebnisse werden auf dem Server neu berechnet.':'Saved results are independently recalculated on the server.'}</p></div>
+    {snapshot&&<><ScenarioView snapshot={{...snapshot,stale:snapshot.revision!==state.revision}} lang={lang}/>{dirty&&<p className="banner">{de?'Ungespeicherte Änderungen: Der gespeicherte Vergleich zeigt die vorige Eingabe.':'Unsaved changes: the saved comparison still shows the previous inputs.'}</p>}<button className="btn" disabled={dirty||changed||snapshot.revision!==state.revision} onClick={()=>{onSelect?.(snapshot.id);onBrief?.();}}>{de?'Beratungsgespräch vorbereiten':'Prepare adviser meeting'}</button></>}
+    </section></div></>;
 }
