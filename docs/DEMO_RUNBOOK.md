@@ -10,7 +10,7 @@ The owner requested reusing the existing private project OpenAI key on the hoste
 
 Free verification: all 17 browser flows and 30 frontend tests pass, including selected input, capture → transcription → saved fact → playback → next capture, provider-auth errors and cancellation of late transcription. These use synthetic capture and mocked providers; physical microphone/speaker quality still requires the user's device check.
 
-For an explicitly authorized live hosted check, `scripts/hosted-voice-smoke.mjs --allow-paid --url=<selected HTTPS Sites URL>` makes at most two paid calls: one short synthetic speech generation and its transcription. Its short-lived diagnostic authorization must be supplied privately as `FINTWIN_SITE_DIAGNOSTIC_TOKEN`. It never sends a chat turn, changes a fact, reads a room microphone or writes audio/key files. It stops on the first failure without retrying.
+Live verification after publication: the signed-in hosted browser displayed Marin and an enabled Start voice button; **Test voice** completed without an error. One direct OpenAI transcription request using an existing synthetic MP3 and the same private project key returned HTTP 200 in 628 ms: “My savings are 18,000 euros.” No room microphone or household fact was used or changed. The short-lived Sites diagnostic bearer did not establish a signed-in household for API calls (401, zero paid requests), so it was not treated as an end-to-end hosted-transcription pass. Actual microphone capture on the user's device still needs a user check.
 
 ## Fast interview route — 13 September 2026
 
