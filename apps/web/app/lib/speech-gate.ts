@@ -7,5 +7,6 @@ export class SpeechGate {
     this.lastSample = now;
     if (rms > .022) this.voicedMs += elapsed;
   }
-  get hasSpeech() { return this.voicedMs >= 400; }
+  // A short "yes" is a valid conversational turn; a single click is not.
+  get hasSpeech() { return this.voicedMs >= 180; }
 }

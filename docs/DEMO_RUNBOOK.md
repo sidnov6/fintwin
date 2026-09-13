@@ -1,5 +1,17 @@
 # FinTwin demonstration runbook
 
+## Hosted voice repair — 13 September 2026
+
+The private Sites publication uses **chained OpenAI voice**, not the Node-only Realtime transport. **Start voice conversation** now starts capture, transcribes after a short pause, submits the text to the same saved household and speaks the reply. It listens again when playback finishes. **End voice** cancels recording, pending transcription and playback. This path is turn-taking; it does not promise simultaneous, interruptible WebRTC audio.
+
+Choose the correct input under **Microphone & options**. The selector now controls the recording device. A visible microphone meter and **Listening / Transcribing** status separate capture from network work. A short “yes” is accepted by the speech gate; silence still sends no request. Transcription text appears after the pause, not word-by-word while speaking.
+
+The owner requested reusing the existing private project OpenAI key on the hosted site. It is stored only as a server secret; it is not committed or exposed to the browser. Groq's earlier access rejection is now shown as a provider-key problem rather than a microphone-permission problem. Existing budgets and saved facts are unchanged. The hosted preflight reports the active speech voice instead of always displaying the Realtime voice.
+
+Free verification: all 17 browser flows and 30 frontend tests pass, including selected input, capture → transcription → saved fact → playback → next capture, provider-auth errors and cancellation of late transcription. These use synthetic capture and mocked providers; physical microphone/speaker quality still requires the user's device check.
+
+For an explicitly authorized live hosted check, `scripts/hosted-voice-smoke.mjs --allow-paid --url=<selected HTTPS Sites URL>` makes at most two paid calls: one short synthetic speech generation and its transcription. Its short-lived diagnostic authorization must be supplied privately as `FINTWIN_SITE_DIAGNOSTIC_TOKEN`. It never sends a chat turn, changes a fact, reads a room microphone or writes audio/key files. It stops on the first failure without retrying.
+
 ## Fast interview route — 13 September 2026
 
 Use a fresh synthetic demo session. Choose **Explore a sample household** for the fastest path (no onboarding questions).

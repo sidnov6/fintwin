@@ -15,6 +15,7 @@ import type { Lang } from "@fintwin/contracts";
 import { API, authHeaders } from "./api";
 import { VoiceAudioPlayer } from './voice-playback';
 import { SpeechGate } from './speech-gate';
+import {microphoneError,transcriptionError,type SpeechInputError} from './voice-input';
 
 type RecognitionResultEvent = { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> };
 interface Recognition { lang: string; continuous: boolean; interimResults: boolean; start(): void; stop(): void; abort(): void; onresult: ((event: RecognitionResultEvent) => void) | null; onend: (() => void) | null; onerror: ((event: { error: string }) => void) | null; onspeechstart: (() => void) | null }
@@ -34,18 +35,20 @@ export interface SpeechInputOptions {
   lang: Lang;
   /** False when the server has no transcription provider, so we must trust the browser. */
   serverTranscription: boolean;
+  deviceId?:string;
   onInterim(text: string): void;
   onFinal(text: string): void;
   onSpeechStart?(): void;
-  onError(kind: "permission" | "unsupported" | "empty" | "failed"): void;
+  onError(kind: SpeechInputError): void;
 }
 
 const SILENCE_MS = 1200;      // quiet time that ends a turn
 const MIN_SPEECH_MS = 400;    // ignore stray clicks
 const MAX_TURN_MS = 45_000;   // hard ceiling
 
-export function useSpeechInput({lang,serverTranscription,onInterim,onFinal,onSpeechStart,onError}:SpeechInputOptions){
+export function useSpeechInput({lang,serverTranscription,deviceId,onInterim,onFinal,onSpeechStart,onError}:SpeechInputOptions){
   const [listening,setListening]=useState(false),[level,setLevel]=useState(0);
+  const [phase,setPhase]=useState<'idle'|'requesting'|'listening'|'transcribing'>('idle');
   const owner=useRef<{generation:number;media?:MediaStream;recorder?:MediaRecorder;recognition?:Recognition;context?:AudioContext;frame?:number;abort:AbortController}|null>(null);
   const generation=useRef(0),handlers=useRef({onInterim,onFinal,onSpeechStart,onError});handlers.current={onInterim,onFinal,onSpeechStart,onError};
   const cancel=useCallback(()=>{
@@ -54,11 +57,12 @@ export function useSpeechInput({lang,serverTranscription,onInterim,onFinal,onSpe
     if(current?.recorder){current.recorder.onstop=null;if(current.recorder.state==='recording')current.recorder.stop();}
     current?.media?.getTracks().forEach(t=>t.stop());void current?.context?.close().catch(()=>{});
     if(current?.recognition){current.recognition.onend=null;try{current.recognition.abort();}catch{}}
-    setListening(false);setLevel(0);
+    setListening(false);setLevel(0);setPhase('idle');
   },[]);
   const stop=useCallback(()=>{const c=owner.current;if(c?.recorder?.state==='recording')c.recorder.stop();else c?.recognition?.stop();},[]);
   const start=useCallback(async()=>{
     cancel();const gen=generation.current,current={generation:gen,abort:new AbortController()} as NonNullable<typeof owner.current>;owner.current=current;
+    setPhase('requesting');
     const valid=()=>owner.current===current && generation.current===gen && !current.abort.signal.aborted;
     if(!serverTranscription){
       const Ctor=recognitionCtor();if(!Ctor){handlers.current.onError('unsupported');cancel();return;}
@@ -68,25 +72,28 @@ export function useSpeechInput({lang,serverTranscription,onInterim,onFinal,onSpe
       instance.onresult=e=>{if(!valid())return;let interim='';for(let i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal)finalText+=e.results[i][0].transcript;else interim+=e.results[i][0].transcript;}handlers.current.onInterim((finalText+interim).trim());};
       instance.onerror=e=>{if(valid())handlers.current.onError(e.error==='not-allowed'?'permission':e.error==='no-speech'?'empty':'failed');};
       instance.onend=()=>{if(!valid())return;const text=finalText.trim();cancel();if(text)handlers.current.onFinal(text);};
-      try{instance.start();setListening(true);}catch{cancel();handlers.current.onError('failed');}return;
+      try{instance.start();setListening(true);setPhase('listening');}catch{cancel();handlers.current.onError('failed');}return;
     }
     if(!canRecord()){cancel();handlers.current.onError('unsupported');return;}
     try{
-      const media=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+      const media=await navigator.mediaDevices.getUserMedia({audio:{...(deviceId?{deviceId:{exact:deviceId}}:{}),echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
       if(!valid()){media.getTracks().forEach(t=>t.stop());return;}current.media=media;
-      const mimeType=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/mp4';
-      const recorder=new MediaRecorder(media,{mimeType,audioBitsPerSecond:64000});current.recorder=recorder;
+      const supportedType=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'].find(type=>MediaRecorder.isTypeSupported(type));
+      const recorder=new MediaRecorder(media,{...(supportedType?{mimeType:supportedType}:{}),audioBitsPerSecond:64000});current.recorder=recorder;
+      const mimeType=recorder.mimeType||supportedType||'audio/webm';
       const gate=new SpeechGate();
       const chunks:Blob[]=[];recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
       recorder.onstop=async()=>{
         if(!valid())return;setListening(false);setLevel(0);if(current.frame)cancelAnimationFrame(current.frame);
         media.getTracks().forEach(t=>t.stop());void current.context?.close().catch(()=>{});
-        const blob=new Blob(chunks,{type:mimeType});if(!gate.hasSpeech||blob.size<1200){handlers.current.onError('empty');cancel();return;}
-        try{const form=new FormData();form.set('audio',blob,mimeType.includes('mp4')?'question.mp4':'question.webm');form.set('language',lang);
-          const response=await fetch(`${API}/v1/voice/transcribe`,{method:'POST',headers:authHeaders(),body:form,credentials:'include',signal:current.abort.signal});
-          if(!response.ok)throw new Error('transcription_failed');const body=await response.json();if(!valid())return;
+        const blob=new Blob(chunks,{type:mimeType});if(!gate.hasSpeech||blob.size<400){handlers.current.onError('empty');cancel();return;}
+        setPhase('transcribing');
+        try{const form=new FormData();form.set('audio',blob,mimeType.includes('mp4')?'question.mp4':mimeType.includes('ogg')?'question.ogg':'question.webm');form.set('language',lang);
+          const response=await fetch(`${API}/v1/voice/transcribe`,{method:'POST',headers:authHeaders(),body:form,credentials:'include',signal:AbortSignal.any([current.abort.signal,AbortSignal.timeout(20000)])});
+          const body=await response.json().catch(()=>({}));if(!valid())return;
+          if(!response.ok||body.ok===false){cancel();handlers.current.onError(transcriptionError(body.code,response.status));return;}
           const text=body.data?.transcript?.trim();cancel();if(text)handlers.current.onFinal(text);else handlers.current.onError('empty');
-        }catch{if(valid()){cancel();handlers.current.onError('failed');}}
+        }catch(error){if(valid()){cancel();handlers.current.onError((error as Error).name==='TimeoutError'?'timeout':'failed');}}
       };
       const context=new AudioContext();current.context=context;const analyser=context.createAnalyser();analyser.fftSize=1024;context.createMediaStreamSource(media).connect(analyser);
       await context.resume();if(!valid())return;
@@ -96,16 +103,16 @@ export function useSpeechInput({lang,serverTranscription,onInterim,onFinal,onSpe
         if(rms>.022){if(!heard)handlers.current.onSpeechStart?.();heard=true;lastVoice=now;}
         if((heard&&now-lastVoice>SILENCE_MS&&now-started>MIN_SPEECH_MS)||(!heard&&now-started>6000)||now-started>MAX_TURN_MS){recorder.stop();return;}current.frame=requestAnimationFrame(tick);
       };
-      recorder.start(200);setListening(true);tick();
-    }catch{if(valid()){cancel();handlers.current.onError('permission');}}
-  },[cancel,lang,serverTranscription]);
-  useEffect(()=>cancel,[cancel,lang]);return{listening,level,start,stop,cancel};
+      recorder.start(200);setListening(true);setPhase('listening');tick();
+    }catch(error){if(valid()){cancel();handlers.current.onError(microphoneError(error));}}
+  },[cancel,lang,serverTranscription,deviceId]);
+  useEffect(()=>cancel,[cancel,lang]);return{listening,phase,level,start,stop,cancel};
 }
 
 // --- output ------------------------------------------------------------------
 
 export interface SpeakerOptions { enabled: boolean; serverVoice: boolean; maxChars: number }
-export type VoiceError = 'terms' | 'billing' | 'autoplay' | 'budget' | 'failed' | 'unsupported' | null;
+export type VoiceError = 'terms' | 'billing' | 'auth' | 'autoplay' | 'budget' | 'failed' | 'unsupported' | null;
 
 /** Words that end in a period without ending a sentence. */
 const ABBREVIATIONS = new Set([
@@ -194,7 +201,7 @@ export function useSpeaker(lang:Lang,{enabled,serverVoice,maxChars}:SpeakerOptio
         const controller=new AbortController();request.current=controller;
         try{
           const response=await fetch(`${API}/v1/voice/synthesize`,{method:'POST',credentials:'include',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({text,language:lang}),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(20000)])});
-          if(!response.ok){const body=await response.json().catch(()=>({}));if(gen===generation.current)setVoiceError(body.code==='voice_terms_required'?'terms':body.code==='openai_billing_required'?'billing':body.code==='budget_exhausted'?'budget':'failed');failed=true;break;}
+          if(!response.ok){const body=await response.json().catch(()=>({}));if(gen===generation.current)setVoiceError(body.code==='voice_terms_required'?'terms':body.code==='openai_billing_required'?'billing':body.code==='provider_auth_failed'?'auth':body.code==='budget_exhausted'?'budget':'failed');failed=true;break;}
           const blob=await response.blob();if(gen!==generation.current)break;
           await player.current!.play(blob,controller.signal);
         }catch{if(gen===generation.current)setVoiceError('failed');failed=true;break;}

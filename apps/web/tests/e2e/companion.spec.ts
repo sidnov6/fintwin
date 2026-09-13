@@ -86,7 +86,7 @@ test('B03/U02 German A4, keyboard slider, draft language switch and sample recov
 });
 
 test('U03 microphone controls and preflight are transparent without paid permissions',async({page})=>{
-  await page.getByRole('button',{name:'Start a conversation',exact:true}).click();await expect(page.getByRole('button',{name:'Start voice conversation',exact:true})).toBeVisible();await page.getByText('Microphone & options',{exact:true}).click();await expect(page.getByRole('button',{name:'Start voice conversation',exact:true})).toBeDisabled();await expect(page.getByLabel('Microphone',{exact:true})).toBeVisible();await expect(page.getByLabel('Push to talk',{exact:true})).not.toBeChecked();
+  await page.getByRole('button',{name:'Start a conversation',exact:true}).click();await expect(page.getByRole('button',{name:'Start voice conversation',exact:true})).toBeVisible();await page.getByText('Microphone & options',{exact:true}).click();await expect(page.getByRole('button',{name:'Start voice conversation',exact:true})).toBeDisabled();await expect(page.getByLabel('Microphone',{exact:true})).toBeVisible();await expect(page.getByLabel('Push to talk',{exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'Presenter preflight',exact:true}).click();await expect(page.locator('.page')).toContainText('Not run');await page.screenshot({path:resolve(evidence,'preflight-provider-free.png'),fullPage:true});
 });
 
