@@ -20,7 +20,7 @@ afterEach(()=>vi.restoreAllMocks());
 describe('OpenAI primary and explicit recovery — mocked traffic only',()=>{
   it('selects GPT-5.4, OpenAI transcription and multilingual Marin; preserves Groq',()=>{
     const primary=chatProvider(config)!;
-    expect(primary).toMatchObject({id:'api.openai.com',model:'gpt-5.4',tokenField:'max_completion_tokens',reasoningEffort:'low',temperature:false});
+    expect(primary).toMatchObject({id:'api.openai.com',model:'gpt-5.4',tokenField:'max_completion_tokens',reasoningEffort:'none',verbosity:'low',temperature:false});
     expect(groqFallback(config,primary)).toMatchObject({id:'groq',apiKey:'synthetic-groq'});
     expect(speechInProvider(config)).toMatchObject({id:'openai',model:'gpt-4o-mini-transcribe'});
     expect(speechOutProvider(config)).toMatchObject({id:'openai',model:'gpt-4o-mini-tts',voice:'marin',languages:'multilingual'});
@@ -33,9 +33,25 @@ describe('OpenAI primary and explicit recovery — mocked traffic only',()=>{
     const result=await app.say('My name is Alex. My income is 5000 net monthly.');
     expect(spy).toHaveBeenCalledOnce();const [url,init]=spy.mock.calls[0];
     expect(url).toBe('https://api.openai.com/v1/responses');expect(new Headers(init?.headers).get('authorization')).toBe('Bearer synthetic-openai');
-    const payload=JSON.parse(String(init?.body));expect(payload).toMatchObject({model:'gpt-5.4',max_output_tokens:3500,reasoning:{effort:'low'},stream:true,store:false});expect(payload).not.toHaveProperty('temperature');expect(payload).not.toHaveProperty('reasoning_effort');expect(payload).not.toHaveProperty('messages');expect(payload.tools[0]).toMatchObject({type:'function',strict:false});
+    const payload=JSON.parse(String(init?.body));expect(payload).toMatchObject({model:'gpt-5.4',max_output_tokens:3500,reasoning:{effort:'none'},text:{verbosity:'low'},stream:true,store:false});expect(payload).not.toHaveProperty('temperature');expect(payload).not.toHaveProperty('reasoning_effort');expect(payload).not.toHaveProperty('messages');expect(payload.tools[0]).toMatchObject({type:'function',strict:false});
     expect(result.message?.meta).toMatchObject({origin:'live',provider:'api.openai.com',model:'gpt-5.4'});
     expect((await usageSummary(env,'unused')).totalUsed).toBeCloseTo(.00046);
+  });
+  it('preserves explicit reasoning and does not guess latency capabilities for other models',()=>{
+    expect(chatProvider({...config,OPENAI_REASONING_EFFORT:'low'})?.reasoningEffort).toBe('low');
+    expect(chatProvider({...config,OPENAI_REASONING_EFFORT:'invalid'})?.reasoningEffort).toBe('none');
+    const other=chatProvider({...config,OPENAI_CHAT_MODEL:'pinned-other-model'});
+    expect(other?.reasoningEffort).toBe('low');expect(other?.verbosity).toBeUndefined();
+    expect(groqFallback(config,chatProvider(config)!)?.reasoningEffort).toBe('medium');
+  });
+  it('uses short spoken delivery without dropping tool or affordability requirements',async()=>{
+    const {env}=testEnv(config),app=client(env);await app.login();
+    const spy=vi.spyOn(globalThis,'fetch').mockResolvedValue(responses('What would you like to explore?'));
+    await app.say('Explain how this works.','en',{mode:'voice'});
+    const payload=JSON.parse(String(spy.mock.calls[0][1]?.body));
+    expect(payload.input[0]).toMatchObject({role:'system',content:expect.stringContaining('short first sentence')});
+    expect(payload.input[0].content).toContain('monthly shortfall');
+    expect(payload.tools.length).toBeGreaterThan(0);
   });
   it('removes a partial primary reply, labels Groq, and does not repeat intake writes',async()=>{
     const {env}=testEnv(config),app=client(env);await app.login();

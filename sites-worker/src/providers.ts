@@ -20,7 +20,8 @@ export interface ChatProvider {
   protocol?: 'responses';
   /** gpt-oss and qwen accept reasoning_effort; most others do not. */
   supportsReasoningEffort: boolean;
-  reasoningEffort: "low" | "medium" | "high" | null;
+  reasoningEffort: "none" | "low" | "medium" | "high" | null;
+  verbosity?: 'low';
   maxTokens: number;
   tokenField: string;
   temperature: boolean;
@@ -36,11 +37,21 @@ export function chatProvider(env: Env): ChatProvider | null {
   // An explicit OpenAI-compatible endpoint wins, so any vendor can be used.
   const custom = env.LLM_API_KEY && env.LLM_BASE_URL;
   if (custom && (!env.LLM_MODEL?.trim() || !/^https:\/\//.test(env.LLM_BASE_URL!))) return null;
-  if (!custom && env.OPENAI_API_KEY) return {
-    id: 'api.openai.com', baseUrl: 'https://api.openai.com/v1', apiKey: env.OPENAI_API_KEY,
-    model: env.OPENAI_CHAT_MODEL || 'gpt-5.4', protocol: 'responses', supportsReasoningEffort: true,
-    reasoningEffort: 'low', maxTokens: 3500, tokenField: 'max_completion_tokens', temperature: false,
-  };
+  if (!custom && env.OPENAI_API_KEY) {
+    const model = env.OPENAI_CHAT_MODEL || 'gpt-5.4';
+    // The interview companion uses tools for arithmetic, not hidden reasoning.
+    // Keep unknown/pinned model overrides on the previous compatible settings.
+    const fastModel = /^gpt-5\.4(?:-\d{4}-\d{2}-\d{2})?$/.test(model);
+    const requested = env.OPENAI_REASONING_EFFORT;
+    const effort = requested && ['none', 'low', 'medium', 'high'].includes(requested)
+      ? requested as NonNullable<ChatProvider['reasoningEffort']> : fastModel ? 'none' : 'low';
+    return {
+      id: 'api.openai.com', baseUrl: 'https://api.openai.com/v1', apiKey: env.OPENAI_API_KEY,
+      model, protocol: 'responses', supportsReasoningEffort: true,
+      reasoningEffort: effort, ...(fastModel ? { verbosity: 'low' as const } : {}),
+      maxTokens: 3500, tokenField: 'max_completion_tokens', temperature: false,
+    };
+  }
   const baseUrl = custom ? env.LLM_BASE_URL! : "https://api.groq.com/openai/v1";
   const apiKey = custom ? env.LLM_API_KEY! : env.GROQ_API_KEY || "";
   if (!apiKey) return null;

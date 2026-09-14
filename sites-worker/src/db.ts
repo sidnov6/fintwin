@@ -49,6 +49,7 @@ export interface Env {
   FINTWIN_REALTIME_RESERVE_USD?: string;
   OPENAI_API_KEY?: string;
   OPENAI_CHAT_MODEL?: string;
+  OPENAI_REASONING_EFFORT?: string;
   OPENAI_STT_MODEL?: string;
   OPENAI_TTS_MODEL?: string;
   OPENAI_TTS_VOICE?: string;

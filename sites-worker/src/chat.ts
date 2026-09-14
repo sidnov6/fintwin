@@ -143,11 +143,12 @@ function humanize(text: string): string {
   return text.replace(/\*\*/g, "").replace(/`/g, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s*[-•]\s+/gm, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-async function liveTurn(text: string, ctx: ToolContext, history: Message[], writer: SseWriter, messageId:string): Promise<{ text: string; suggestions: string[]; meta: Message["meta"] }> {
+async function liveTurn(text: string, ctx: ToolContext, history: Message[], writer: SseWriter, messageId:string, voice=false): Promise<{ text: string; suggestions: string[]; meta: Message["meta"] }> {
   const pre = await prestore(text, ctx, history);
   const storedNote = [pre.name ? `name=${pre.name}` : "", ...pre.stored.map(item => `${item.key}=${JSON.stringify(item.value)}`)].filter(Boolean).join(", ");
   const turn = { introduced: history.some(message => message.role === "assistant"), stored: storedNote, skipped: pre.skipped,sourceTurnId:ctx.turnId };
-  const messages: unknown[] = [{ role: "system", content: systemPrompt(ctx.state, ctx.lang, ctx.now, turn) }];
+  const prompt=()=>systemPrompt(ctx.state,ctx.lang,ctx.now,turn)+(voice?'\nThis is a spoken conversation. Lead with the answer in a short first sentence; usually 1–3 sentences total, unless the user asks for detail. Skip suggestions/footer metadata for voice; the app supplies suggestions. Do not omit a negative remaining_after_saving: say the monthly shortfall. Keep all fact validation, tools and financial limitations in force.':'');
+  const messages: unknown[] = [{ role: "system", content: prompt() }];
   for (const message of history.slice(-20)) if (message.role !== "system" && message.text) messages.push({ role: message.role, content: message.text.slice(0, 4000) });
   messages.push({ role: "user", content: text });
   const responseInput = [...messages];
@@ -180,7 +181,7 @@ async function liveTurn(text: string, ctx: ToolContext, history: Message[], writ
       if (result.responseOutput) responseInput.push({ type: 'function_call_output', call_id: call.id, output: JSON.stringify(output) });
     }
     // Refresh the picture the model sees after tool writes.
-    (messages[0] as { content: string }).content = systemPrompt(ctx.state, ctx.lang, ctx.now, turn);
+    (messages[0] as { content: string }).content = prompt();
   }
   const split = splitSuggestions(humanize(finalText));
   if (!split.text) throw new Error("The model returned an empty answer.");
@@ -251,7 +252,7 @@ export async function handleChat(request:Request,env:Env,userId:string):Promise<
       }else if(isBankQuestion(text)||(/^(?:and|what about|how about|only|just|und|nur|wie sieht|was ist mit)\b/i.test(text)&&history.at(-1)?.cards.some(c=>c.type==='bank_trends'))||(!ctx.state.profile?.onboardingDone&&history.at(-1)?.meta?.pendingFacts?.length&&(Boolean(ctx.intake?.stored.length||ctx.intake?.name||ctx.intake?.skipped.length)||/^(?:hi|hello|hey|hallo|yes|yeah|ja|ok|okay|sure|skip|give name|name)$/i.test(text)))){
         result=await companionTurn(text,ctx,history);
       }else if(chatProvider(env) && env.FINTWIN_ALLOW_PAID==='1'){
-        invoked=chatProvider(env);origin='live';result=await liveTurn(text,ctx,history,writer,messageId);
+        invoked=chatProvider(env);origin='live';result=await liveTurn(text,ctx,history,writer,messageId,body.mode==='voice');
       }else result=await companionTurn(text,ctx,history);
       if(controller.signal.aborted)throw new AppError('cancelled',409);
     }catch(error){

@@ -7,6 +7,17 @@ class AudioMock {
   play=vi.fn(async()=>{});pause=vi.fn();removeAttribute=vi.fn(()=>{this.src='';});
   constructor(){AudioMock.instances.push(this);}
 }
+class BufferMock extends EventTarget {
+  appendBuffer=vi.fn(()=>queueMicrotask(()=>this.dispatchEvent(new Event('updateend'))));
+}
+class MediaSourceMock extends EventTarget {
+  static instances:MediaSourceMock[]=[];
+  static isTypeSupported=()=>true;
+  readyState='open';buffer=new BufferMock();
+  addSourceBuffer=vi.fn(()=>this.buffer);
+  endOfStream=vi.fn();
+  constructor(){super();MediaSourceMock.instances.push(this);queueMicrotask(()=>this.dispatchEvent(new Event('sourceopen')));}
+}
 const clip=()=>new Blob(['synthetic-audio'],{type:'audio/wav'});
 beforeEach(()=>{AudioMock.instances=[];vi.stubGlobal('Audio',AudioMock);vi.spyOn(URL,'createObjectURL').mockReturnValue('blob:owned');vi.spyOn(URL,'revokeObjectURL').mockImplementation(()=>{});});
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
@@ -50,5 +61,36 @@ describe('voice playback lifecycle (mock audio, no provider)',()=>{
     const player=new VoiceAudioPlayer(vi.fn(),vi.fn());player.prepare();const audio=AudioMock.instances[0];
     const finished=player.play(clip(),new AbortController().signal);audio.pause.mockClear();await Promise.resolve();expect(audio.pause).not.toHaveBeenCalled();
     audio.onended?.();await finished;
+  });
+  it('starts MP3 playback before the response finishes downloading',async()=>{
+    MediaSourceMock.instances=[];vi.stubGlobal('MediaSource',MediaSourceMock);
+    let stream!:ReadableStreamDefaultController<Uint8Array>;
+    const response=new Response(new ReadableStream({start(c){stream=c;}}),{headers:{'content-type':'audio/mpeg'}});
+    const player=new VoiceAudioPlayer(vi.fn(),vi.fn());
+    const done=player.playResponse(response,new AbortController().signal);
+    stream.enqueue(new Uint8Array([1,2,3]));
+    await vi.waitFor(()=>expect(MediaSourceMock.instances[0].buffer.appendBuffer).toHaveBeenCalledOnce());
+    expect(AudioMock.instances[0].play).toHaveBeenCalledOnce();expect(MediaSourceMock.instances[0].endOfStream).not.toHaveBeenCalled();
+    stream.enqueue(new Uint8Array([4,5]));stream.close();
+    await vi.waitFor(()=>expect(MediaSourceMock.instances[0].endOfStream).toHaveBeenCalledOnce());
+    AudioMock.instances[0].onended?.();await done;expect(URL.revokeObjectURL).toHaveBeenCalledOnce();
+  });
+  it('cancels a streaming download and retains no stale audio owner',async()=>{
+    vi.stubGlobal('MediaSource',MediaSourceMock);const cancel=vi.fn();
+    const response=new Response(new ReadableStream({cancel}),{headers:{'content-type':'audio/mpeg'}});
+    const owner=new AbortController(),player=new VoiceAudioPlayer(vi.fn(),vi.fn());
+    const done=player.playResponse(response,owner.signal);await Promise.resolve();owner.abort();await done;
+    expect(cancel).toHaveBeenCalledOnce();expect(URL.revokeObjectURL).toHaveBeenCalledOnce();
+  });
+  it('uses the same downloaded response as a blob when streaming MP3 is unsupported',async()=>{
+    vi.stubGlobal('MediaSource',{isTypeSupported:()=>false});const response=new Response(clip());
+    const player=new VoiceAudioPlayer(vi.fn(),vi.fn());const done=player.playResponse(response,new AbortController().signal);
+    await vi.waitFor(()=>expect(AudioMock.instances[0]?.play).toHaveBeenCalledOnce());AudioMock.instances[0].onended?.();await done;
+  });
+  it('surfaces streaming decode failures and cancels the pending download',async()=>{
+    vi.stubGlobal('MediaSource',MediaSourceMock);const cancel=vi.fn();
+    const response=new Response(new ReadableStream({cancel}),{headers:{'content-type':'audio/mpeg'}});
+    const player=new VoiceAudioPlayer(vi.fn(),vi.fn());const done=player.playResponse(response,new AbortController().signal);
+    const assertion=expect(done).rejects.toThrow('playback_failed');AudioMock.instances[0].onerror?.();await assertion;expect(cancel).toHaveBeenCalledOnce();
   });
 });

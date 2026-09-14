@@ -15,6 +15,7 @@ import type { Lang } from "@fintwin/contracts";
 import { API, authHeaders } from "./api";
 import { VoiceAudioPlayer } from './voice-playback';
 import { SpeechGate } from './speech-gate';
+import { playSpeechQueue } from './speech-queue';
 import {microphoneError,transcriptionError,type SpeechInputError} from './voice-input';
 
 type RecognitionResultEvent = { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> };
@@ -42,7 +43,7 @@ export interface SpeechInputOptions {
   onError(kind: SpeechInputError): void;
 }
 
-const SILENCE_MS = 1200;      // quiet time that ends a turn
+export const SILENCE_MS = 800; // leave room for a natural pause without a 1.2s tail
 const MIN_SPEECH_MS = 400;    // ignore stray clicks
 const MAX_TURN_MS = 45_000;   // hard ceiling
 
@@ -183,6 +184,15 @@ export function speechChunks(text: string, maxChars: number): string[] {
   return chunks;
 }
 
+/** Start with one short sentence, then larger clips. Never speak speculative
+ * model deltas: only the completed answer reaches this queue. */
+export function replySpeechChunks(text: string, maxChars: number): string[] {
+  const parts = sentences(text);
+  if (!parts.length) return [];
+  const first = speechChunks(parts[0], Math.min(maxChars, 180));
+  return [first[0], ...speechChunks([...first.slice(1), ...parts.slice(1)].join(' '), Math.min(maxChars, 400))];
+}
+
 export function useSpeaker(lang:Lang,{enabled,serverVoice,maxChars}:SpeakerOptions){
   const [speaking,setSpeaking]=useState(false),queue=useRef<string[]>([]),pending=useRef(''),generation=useRef(0),playing=useRef(false);
   const [voiceError,setVoiceError]=useState<VoiceError>(null);
@@ -196,16 +206,22 @@ export function useSpeaker(lang:Lang,{enabled,serverVoice,maxChars}:SpeakerOptio
     if(playing.current)return;const gen=generation.current;playing.current=true;setSpeaking(true);
     let failed=false;
     while(queue.current.length&&gen===generation.current){
-      const text=queue.current.shift()!;
       if(serverVoice){
         const controller=new AbortController();request.current=controller;
+        const chunks=queue.current.splice(0);
         try{
-          const response=await fetch(`${API}/v1/voice/synthesize`,{method:'POST',credentials:'include',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({text,language:lang}),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(20000)])});
-          if(!response.ok){const body=await response.json().catch(()=>({}));if(gen===generation.current)setVoiceError(body.code==='voice_terms_required'?'terms':body.code==='openai_billing_required'?'billing':body.code==='provider_auth_failed'?'auth':body.code==='budget_exhausted'?'budget':'failed');failed=true;break;}
-          const blob=await response.blob();if(gen!==generation.current)break;
-          await player.current!.play(blob,controller.signal);
-        }catch{if(gen===generation.current)setVoiceError('failed');failed=true;break;}
-      }else if(typeof speechSynthesis!=='undefined'){
+          await playSpeechQueue(chunks,controller.signal,async(text,signal)=>{
+            const response=await fetch(`${API}/v1/voice/synthesize`,{method:'POST',credentials:'include',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({text,language:lang}),signal:AbortSignal.any([signal,AbortSignal.timeout(20000)])});
+            if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.code==='voice_terms_required'?'terms':body.code==='openai_billing_required'?'billing':body.code==='provider_auth_failed'?'auth':body.code==='budget_exhausted'?'budget':'failed');}
+            return response;
+          },(response,signal)=>player.current!.playResponse(response,signal));
+        }catch(error){if(gen===generation.current){const code=(error as Error).message;setVoiceError(['terms','billing','auth','budget'].includes(code)?code as VoiceError:'failed');}failed=true;}
+        if(request.current===controller)request.current=null;
+        if(failed)break;
+        continue;
+      }
+      const text=queue.current.shift()!;
+      if(typeof speechSynthesis!=='undefined'){
         await new Promise<void>(resolve=>{
           const utterance=new SpeechSynthesisUtterance(text);utterance.lang=lang==='de'?'de-DE':'en-GB';
           const voices=speechSynthesis.getVoices(),names=lang==='de'?['Anna','Katja','Google Deutsch']:['Samantha','Ava','Google UK English Female'];
@@ -222,9 +238,9 @@ export function useSpeaker(lang:Lang,{enabled,serverVoice,maxChars}:SpeakerOptio
   const feed=useCallback((text:string)=>{if(enabled)pending.current+=text;},[enabled]);
   const flush=useCallback(()=>{
     if(!enabled){onIdle.current?.();return;}
-    queue.current.push(...speechChunks(pending.current,Math.max(80,serverVoice?maxChars:240)));pending.current='';void drain();
+    queue.current.push(...replySpeechChunks(pending.current,Math.max(80,serverVoice?maxChars:240)));pending.current='';void drain();
   },[enabled,serverVoice,maxChars,drain]);
   const setOnIdle=useCallback((handler:(()=>void)|null)=>{onIdle.current=handler;},[]);
-  const speakNow=useCallback((text:string)=>{stop();prepare();queue.current=speechChunks(text,Math.max(80,serverVoice?maxChars:240));void drain();},[stop,prepare,serverVoice,maxChars,drain]);
+  const speakNow=useCallback((text:string)=>{stop();prepare();queue.current=replySpeechChunks(text,Math.max(80,serverVoice?maxChars:240));void drain();},[stop,prepare,serverVoice,maxChars,drain]);
   useEffect(()=>stop,[stop,lang]);return{speaking,feed,flush,stop,setOnIdle,voiceError,prepare,resume,speakNow};
 }

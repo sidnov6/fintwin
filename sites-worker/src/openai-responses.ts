@@ -40,6 +40,7 @@ export async function responsesRound(env: Env, provider: ChatProvider, input: un
       method: 'POST', headers: { 'content-type': 'application/json' }, signal,
       body: JSON.stringify({ model: provider.model, input, stream: true, store: false,
         reasoning: { effort: provider.reasoningEffort || 'low' }, max_output_tokens: provider.maxTokens,
+        ...(provider.verbosity ? { text: { verbosity: provider.verbosity } } : {}),
         tools: TOOL_DEFS.map(tool => ({ type: 'function', ...tool.function, strict: false })), tool_choice: 'auto' }),
     });
     reader = response.body?.getReader();
