@@ -12,6 +12,12 @@ test.beforeEach(async({page})=>{
 });
 async function say(page:Page,text:string){const box=page.locator('.composer textarea');await box.fill(text);await box.press('Enter');await expect(page.locator('.thread .msg.user').last()).toContainText(text);await expect(page.locator('.caret,.typing')).toHaveCount(0,{timeout:10000});}
 async function tab(page:Page,name:string){const desktop=page.getByRole('tab',{name,exact:true});if(await desktop.isVisible())await desktop.click();else await page.locator('.bottom-tabs').getByRole('button',{name,exact:true}).click();}
+async function mockSpokenReply(page:Page){
+  await page.route('**/v1/chat',route=>route.fulfill({contentType:'text/event-stream',body:[
+    {type:'start',messageId:'spoken-reply',mode:'live'},
+    {type:'done',message:{id:'spoken-reply',role:'assistant',text:'Hi Alex, what would you like to explore?',cards:[],createdAt:new Date().toISOString()}},
+  ].map(event=>`data: ${JSON.stringify(event)}\n\n`).join('')}));
+}
 
 test('Interview demo: charts, contextual drill-down, reload and bank filters',async({page})=>{
   await page.getByRole('button',{name:'Explore a sample household',exact:true}).click();
@@ -86,7 +92,10 @@ test('B03/U02 German A4, keyboard slider, draft language switch and sample recov
 });
 
 test('U03 microphone controls and preflight are transparent without paid permissions',async({page})=>{
-  await page.getByRole('button',{name:'Start a conversation',exact:true}).click();await expect(page.getByRole('button',{name:'Start voice conversation',exact:true})).toBeVisible();await page.getByText('Microphone & options',{exact:true}).click();await expect(page.getByRole('button',{name:'Start voice conversation',exact:true})).toBeDisabled();await expect(page.getByLabel('Microphone',{exact:true})).toBeVisible();await expect(page.getByLabel('Push to talk',{exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Start a conversation',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Hands-free',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Hands-free',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Speak',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Speak',exact:true})).toBeDisabled();
+  await expect(page.getByText('Microphone & options',{exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'Test voice',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'Presenter preflight',exact:true}).click();await expect(page.locator('.page')).toContainText('Not run');await page.screenshot({path:resolve(evidence,'preflight-provider-free.png'),fullPage:true});
 });
 
@@ -109,27 +118,26 @@ test('continuous voice is visible by default, text remains full-width, and legac
   await page.screenshot({path:resolve(evidence,'voice-first-narrow.png'),fullPage:true});
 });
 
-test('voice test exposes model terms and never starts the microphone (mock provider)',async({page})=>{
-  await page.request.patch('/v1/profile',{data:{language:'en',voiceAutoplay:false}});
+test('spoken reply exposes model terms and never starts the microphone (mock provider)',async({page})=>{
+  await page.request.patch('/v1/profile',{data:{language:'en',voiceAutoplay:true}});await mockSpokenReply(page);
   await page.route('**/v1/state',async route=>{const response=await route.fetch(),body=await response.json();body.data.ai.voice=true;body.data.ai.realtime.mode='chained';body.data.ai.speechOut={provider:'groq',voice:'hannah',maxChars:190,multilingual:false};await route.fulfill({response,json:body});});
   let requests=0;await page.route('**/v1/voice/synthesize',async route=>{requests++;await route.fulfill({status:403,json:{ok:false,code:'voice_terms_required',error:'Review the terms.'}});});
   await page.addInitScript(()=>{Object.defineProperty(navigator.mediaDevices,'getUserMedia',{value:()=>{throw new Error('A voice output test must not record audio');}});});
   await page.reload();await page.getByRole('button',{name:'Start a conversation',exact:true}).click();
-  await expect(page.getByRole('region',{name:'Voice playback'})).toContainText('Hannah');
-  await page.getByRole('button',{name:'Test voice',exact:true}).click();
-  await expect(page.getByRole('region',{name:'Voice playback'}).getByRole('alert')).toContainText('Orpheus model terms');await expect(page.getByRole('link',{name:'Open Groq Console'})).toHaveAttribute('href','https://console.groq.com/');expect(requests).toBe(1);
-  await expect(page.getByRole('button',{name:'Test voice',exact:true})).toBeEnabled();await expect(page.locator('.composer textarea')).toBeEnabled();
+  await say(page,'Call me Alex');
+  await expect(page.locator('.voice-playback-error[role="alert"]')).toContainText('Orpheus model terms');await expect(page.getByRole('link',{name:'Open Groq Console'})).toHaveAttribute('href','https://console.groq.com/');expect(requests).toBe(1);
+  await expect(page.getByRole('button',{name:'Test voice',exact:true})).toHaveCount(0);await expect(page.locator('.composer textarea')).toBeEnabled();
 });
 
-test('OpenAI voice shows Marin and actionable missing-credit guidance (mock provider)',async({page})=>{
-  await page.request.patch('/v1/profile',{data:{language:'en',voiceAutoplay:false}});
-  await page.route('**/v1/state',async route=>{const response=await route.fetch(),body=await response.json();body.data.ai.voice=true;body.data.ai.realtime.mode='realtime';body.data.ai.speechOut={provider:'openai',voice:'marin',maxChars:800,multilingual:true};await route.fulfill({response,json:body});});
+test('OpenAI spoken reply retains actionable missing-credit guidance without voice labels (mock provider)',async({page})=>{
+  await page.request.patch('/v1/profile',{data:{language:'en',voiceAutoplay:true}});await mockSpokenReply(page);
+  await page.route('**/v1/state',async route=>{const response=await route.fetch(),body=await response.json();body.data.ai.voice=true;body.data.ai.realtime.mode='chained';body.data.ai.speechOut={provider:'openai',voice:'marin',maxChars:800,multilingual:true};await route.fulfill({response,json:body});});
   let requests=0;await page.route('**/v1/voice/synthesize',async route=>{requests++;await route.fulfill({status:402,json:{ok:false,code:'openai_billing_required',error:'API billing needs attention.'}});});
   await page.addInitScript(()=>{Object.defineProperty(navigator.mediaDevices,'getUserMedia',{value:()=>{throw new Error('Output testing must not record audio');}});});
   await page.reload();await page.getByRole('button',{name:'Start a conversation',exact:true}).click();
-  const output=page.getByRole('region',{name:'Voice playback'});await expect(output).toContainText('Marin');
-  await page.getByRole('button',{name:'Test voice',exact:true}).click();
-  await expect(output.getByRole('alert')).toContainText('Creating an API key does not add credits');
+  await say(page,'Call me Alex');
+  await expect(page.locator('.voice-playback-error[role="alert"]')).toContainText('Creating an API key does not add credits');
+  await expect(page.locator('.composer-wrap')).not.toContainText('Marin');
   await expect(page.getByRole('link',{name:'Open OpenAI API billing'})).toHaveAttribute('href','https://platform.openai.com/settings/organization/billing/overview');
   expect(requests).toBe(1);await expect(page.locator('.composer textarea')).toBeEnabled();
 });

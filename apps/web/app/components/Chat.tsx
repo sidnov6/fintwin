@@ -1,14 +1,13 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AudioLines, CircleAlert, Mic, MicOff, Send, Sparkles, Square, Volume2, VolumeX } from "lucide-react";
+import { AudioLines, CircleAlert, Mic, MicOff, Send, Sparkles, Square } from "lucide-react";
 import type { AppState, Card, Lang, Message } from "@fintwin/contracts";
-import { api, chat } from "../lib/api";
+import { chat } from "../lib/api";
 import { metricValue, timeOfDay } from "../lib/format";
 import { copy } from "../lib/i18n";
 import { speechInputSupported, useSpeechInput, useSpeaker } from "../lib/voice";
 import { CardView } from "./Cards";
 import {RealtimeVoice} from './RealtimeVoice';
-import {ChainedVoice} from './ChainedVoice';
 import {inputErrorMessage} from '../lib/voice-input';
 import type {RealtimeClient,VoiceEvent} from '../lib/realtime';
 
@@ -54,7 +53,7 @@ export function Chat({ state, lang, messages, setMessages, applyState, registerS
 
   const voiceOn = (handsFree || (state.profile?.voiceAutoplay ?? true)) && state.ai.realtime.mode !== 'text' && !state.ai.realtime.available;
   const speaker = useSpeaker(lang, { enabled: voiceOn, serverVoice: state.ai.voice && (state.ai.speechOut.multilingual || lang === "en"), maxChars: state.ai.speechOut.maxChars });
-  const { speaking, feed, flush, stop: stopSpeaking, setOnIdle, voiceError, prepare, resume, speakNow } = speaker;
+  const { speaking, feed, flush, stop: stopSpeaking, setOnIdle, voiceError, prepare, resume } = speaker;
 
   const send = useCallback((text: string, mode: "text" | "voice" = "text", selectedScenario?:string) => {
     const trimmed = text.trim();
@@ -121,13 +120,8 @@ export function Chat({ state, lang, messages, setMessages, applyState, registerS
   }, [setOnIdle, speech]);
 
   function toggleHandsFree() {
-    if (handsFreeRef.current) { handsFreeRef.current = false; setHandsFree(false); speech.cancel(); stopSpeaking(); return; }
+    if (handsFreeRef.current) { stopEverything(); return; }
     stopEverything();setInputError('');setError('');handsFreeRef.current = true; setHandsFree(true); prepare(); void speech.start();
-  }
-
-  function previewVoice(text?:string){
-    handsFreeRef.current=false;setHandsFree(false);speech.cancel();
-    speakNow(text??(lang==='de'?'Hallo, ich bin Ihre KI-Begleitung. Nehmen Sie sich Zeit. Worüber möchten Sie sprechen?':"Hi, I'm your AI companion. Take your time. What would you like to talk about?"));
   }
 
   function stopEverything() {generation.current++; abort.current?.(); abort.current = null; busy.current = false; setThinking(false); setLive(null); stopSpeaking(); speech.cancel(); handsFreeRef.current = false; setHandsFree(false); }
@@ -153,16 +147,15 @@ export function Chat({ state, lang, messages, setMessages, applyState, registerS
   const last = messages.at(-1);
   const suggestions = !live && !thinking && last?.role === "assistant" ? last.suggestions ?? [] : [];
   const canSpeak = speechInputSupported();
-  const lastReply=[...messages].reverse().find(message=>message.role==='assistant'&&message.text)?.text;
-  const generatedVoice=state.ai.voice&&(state.ai.speechOut.multilingual||lang==='en');
-  const voiceName=generatedVoice?(['groq','openai'].includes(state.ai.speechOut.provider)?state.ai.speechOut.voice.replace(/^./,c=>c.toUpperCase()):(lang==='de'?'KI-Stimme':'AI voice')):(lang==='de'?'Systemstimme':'System voice');
+  const voiceAvailable=canSpeak&&state.ai.realtime.mode!=='text'&&state.ai.speechIn.provider!=='none';
+  const voiceStatus=speech.phase==='requesting'?(lang==='de'?'Mikrofon wird gestartet …':'Starting microphone…'):speech.phase==='listening'?t.listening:speech.phase==='transcribing'?(lang==='de'?'Wird transkribiert …':'Transcribing…'):speaking?t.speaking:handsFree&&(thinking||live)?t.thinking:'';
   const voiceErrors={
     auth:lang==='de'?'Der Sprachanbieter verweigert den API-Zugriff. Aktualisieren Sie den privaten Serverschlüssel. Ihre Audioausgabe ist nicht die Ursache.':'The speech provider rejected API access. Update the private server key. This is not a speaker or microphone permission problem.',
     billing:lang==='de'?'OpenAI meldet fehlendes API-Guthaben oder ein erreichtes Kontolimit. Prüfen Sie die API-Abrechnung. Ein API-Schlüssel allein enthält kein Guthaben.':'OpenAI reports unavailable API credits or an account limit. Check API billing. Creating an API key does not add credits.',
-    terms:lang==='de'?'Groq blockiert diese Stimme, bis Sie die Orpheus-Modellbedingungen in Ihrem Groq-Konto geprüft und akzeptiert haben. Danach können Sie die Stimme hier erneut testen.':'Groq has blocked this voice until you review and accept the Orpheus model terms in your Groq account. Then test the voice here again.',
+    terms:lang==='de'?'Groq blockiert diese Stimme, bis Sie die Orpheus-Modellbedingungen in Ihrem Groq-Konto geprüft und akzeptiert haben. Starten Sie danach das Gespräch erneut.':'Groq has blocked this voice until you review and accept the Orpheus model terms in your Groq account. Then start the conversation again.',
     autoplay:lang==='de'?'Der Browser hat die Wiedergabe blockiert. Klicken Sie auf „Audio abspielen“; die Sprachdatei ist bereits bereit.':'Your browser blocked playback. Click “Play audio”; the voice clip is already ready.',
     budget:lang==='de'?'Das Sprach-Nutzungslimit ist erreicht. Sie können weiter schreiben.':'The voice usage allowance has been reached. You can keep using text.',
-    failed:lang==='de'?'Die Sprachausgabe konnte nicht abgespielt werden. Prüfen Sie Ihre Audioausgabe und testen Sie die Stimme erneut.':'Voice playback failed. Check your sound output and test the voice again.',
+    failed:lang==='de'?'Die Sprachausgabe konnte nicht abgespielt werden. Prüfen Sie Ihre Audioausgabe und starten Sie das Gespräch erneut.':'Voice playback failed. Check your sound output and start the conversation again.',
     unsupported:lang==='de'?'Dieser Browser bietet keine Systemstimme. Verwenden Sie einen Browser mit Sprachausgabe oder eine konfigurierte KI-Stimme.':'This browser has no system voice. Use a browser with speech support or a configured AI voice.',
   };
   const strip = state.picture.metrics.filter(metric => ["net_worth", "free_cashflow", "runway"].includes(metric.key));
@@ -183,24 +176,16 @@ export function Chat({ state, lang, messages, setMessages, applyState, registerS
     </div>
 
     <div className="composer-wrap">
-      {state.ai.realtime.available?<RealtimeVoice lang={lang} available beforeStart={stopEverything} onClient={client=>{realtime.current=client;setRealtimeActive(Boolean(client));}} onEvent={realtimeEvent}/>:<ChainedVoice lang={lang} available={canSpeak&&state.ai.realtime.mode!=='text'&&state.ai.speechIn.provider!=='none'} active={handsFree} phase={speech.phase} speaking={speaking} thinking={thinking||Boolean(live)} level={speech.level} device={microphone} voiceName={voiceName} error={inputError} onDevice={value=>{setMicrophone(value);try{localStorage.setItem('fintwin-microphone',value);}catch{/* optional preference */}}} onStart={()=>{stopEverything();toggleHandsFree();}} onEnd={stopEverything} onStopRecording={speech.stop}/>}
-      {state.ai.realtime.mode!=='text'&&!state.ai.realtime.available&&!realtimeActive&&<section className="voice-preview" aria-label={lang==='de'?'Sprachausgabe':'Voice playback'}>
-        <div className="voice-preview-row"><span><Volume2 size={16}/>{voiceName} · {generatedVoice?(lang==='de'?'KI-Stimme':'AI voice'):(lang==='de'?'Deutsch · lokal':'local')}<small>{lang==='de'?'Eine Stimme hören, ohne Ihr Mikrofon einzuschalten.':'Hear a voice without turning on your microphone.'}</small></span>
-          <button className="btn sm" type="button" disabled={speaking||thinking||Boolean(live)||speech.listening} onClick={()=>previewVoice()}>{lang==='de'?'Stimme testen':'Test voice'}</button>
-          {lastReply&&<button className="btn sm ghost" type="button" disabled={speaking||thinking||Boolean(live)||speech.listening} onClick={()=>previewVoice(lastReply)}>{lang==='de'?'Antwort vorlesen':'Read reply'}</button>}
-          {speaking&&<button className="btn sm ghost" type="button" onClick={stopSpeaking}>{lang==='de'?'Audio stoppen':'Stop audio'}</button>}
-        </div>
+      {state.ai.realtime.available&&<RealtimeVoice lang={lang} available beforeStart={stopEverything} onClient={client=>{realtime.current=client;setRealtimeActive(Boolean(client));}} onEvent={realtimeEvent}/>}
+      {!state.ai.realtime.available&&<>
+        {inputError&&<p className="error-line" role="alert">{inputError}</p>}
         {voiceError&&<div className="voice-playback-error" role="alert"><p>{voiceErrors[voiceError]}</p>{voiceError==='terms'&&<a href="https://console.groq.com/" target="_blank" rel="noreferrer">{lang==='de'?'Groq Console öffnen':'Open Groq Console'}</a>}{voiceError==='billing'&&<a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noreferrer">{lang==='de'?'OpenAI API-Abrechnung öffnen':'Open OpenAI API billing'}</a>}{voiceError==='autoplay'&&<button className="btn sm" type="button" onClick={resume}>{lang==='de'?'Audio abspielen':'Play audio'}</button>}</div>}
-        {!voiceError&&speaking&&<p className="note" role="status">{lang==='de'?'Sprachausgabe wird vorbereitet oder abgespielt …':'Preparing or playing voice…'}</p>}
-      </section>}
+      </>}
       {!atLatest&&<button className="btn sm latest" onClick={()=>{setAtLatest(true);threadEnd.current?.scrollIntoView();}}>{lang==='de'?'Zur neuesten Nachricht':'Return to latest'}</button>}
       <span className="sr-only" role="status">{thinking?t.thinking:error}</span>
-      {handsFree && <div className={`voice-banner ${speech.listening ? "" : "quiet"}`}><span className="wave" aria-hidden>{[0, 1, 2, 3, 4].map(index => <i key={index} style={speech.listening ? { height: `${5 + Math.min(13, speech.level * 30 * (index === 2 ? 1.3 : index === 1 || index === 3 ? 1 : 0.7))}px`, animation: "none" } : undefined} />)}</span>
-        <span>{speech.listening ? t.listening : speaking ? t.speaking : t.thinking}{interim ? ` — ${interim}` : ""}</span>
-        <button onClick={toggleHandsFree}>{t.handsFreeOn}</button></div>}
       {suggestions.length > 0 && <div className="suggestions">{suggestions.map(suggestion => <button key={suggestion} onClick={() => send(suggestion)}>{suggestion}</button>)}</div>}
       <form className={`composer ${state.ai.realtime.available?'text-composer':''}`} onSubmit={event => { event.preventDefault(); send(input); }}>
-        {!state.ai.realtime.available&&<button type="button" className={`icon-btn mic ${speech.listening ? "on" : ""}`} style={speech.listening ? { boxShadow: `0 0 0 ${2 + speech.level * 10}px color-mix(in srgb, var(--red) ${12 + speech.level * 26}%, transparent)` } : undefined} onClick={() => {if(speech.listening)speech.stop();else{stopEverything();setInputError('');prepare();void speech.start();}}} aria-label={speech.listening ? t.stopMic : t.mic} disabled={!canSpeak||realtimeActive||speech.phase==='transcribing'||speech.phase==='requesting'||state.ai.speechIn.provider==='none'}>{speech.listening ? <MicOff /> : <Mic />}</button>}
+        {!state.ai.realtime.available&&<button type="button" className={`icon-btn mic ${speech.listening ? "on" : ""}`} style={speech.listening ? { boxShadow: `0 0 0 ${2 + speech.level * 10}px color-mix(in srgb, var(--red) ${12 + speech.level * 26}%, transparent)` } : undefined} onClick={() => {if(speech.listening)speech.stop();else{stopEverything();setInputError('');prepare();void speech.start();}}} aria-label={speech.listening ? t.stopMic : t.mic} aria-pressed={speech.listening} title={speech.listening ? t.stopMic : t.mic} disabled={!voiceAvailable||realtimeActive||speech.phase==='transcribing'||speech.phase==='requesting'}>{speech.listening ? <MicOff /> : <Mic />}</button>}
         <textarea ref={textarea} rows={1} value={speech.listening && interim ? interim : input} onChange={event => setInput(event.target.value)} placeholder={speech.listening ? t.listening : t.placeholder} aria-label={t.placeholder}
           onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(input); } }} />
         {(!input.trim()&&(thinking || live || speaking)) ? <button type="button" className="icon-btn send stop" onClick={()=>{stopEverything();void realtime.current?.interrupt();}} aria-label={t.stopSpeaking}><Square /></button>
@@ -208,8 +193,8 @@ export function Chat({ state, lang, messages, setMessages, applyState, registerS
       </form>
       <div className="status-line">
         <span><i className={`mode-dot ${state.ai.live ? "live" : ""}`} /> {state.ai.live ? t.live : t.offline}</span>
-        {!state.ai.realtime.available&&canSpeak && state.ai.speechIn.provider!=='none' && <button disabled={realtimeActive} className={handsFree ? "on" : ""} onClick={toggleHandsFree}><AudioLines />{handsFree ? t.handsFreeOn : t.handsFree}</button>}
-        {!state.ai.realtime.available&&<button type="button" aria-pressed={voiceOn} disabled={realtimeActive||state.ai.realtime.mode==='text'} onClick={()=>{stopSpeaking();void api.patchProfile({voiceAutoplay:!voiceOn}).then(applyState).catch(e=>setError(e.message));}}>{voiceOn ? <Volume2 size={13} /> : <VolumeX size={13} />}{lang==='de'?(voiceOn?'Antworten vorlesen: an':'Antworten vorlesen: aus'):(voiceOn?'Read replies: on':'Read replies: off')}</button>}
+        {!state.ai.realtime.available&&<button type="button" disabled={!voiceAvailable||realtimeActive} className={`hands-free-toggle ${handsFree ? 'on' : ''}`} aria-pressed={handsFree} onClick={toggleHandsFree}><AudioLines />{handsFree ? t.handsFreeOn : t.handsFree}</button>}
+        {!state.ai.realtime.available&&voiceStatus&&<span className="compact-voice-status" role="status">{voiceStatus}</span>}
         <span style={{ flex: 1 }} />
         <span>{t.disclaimer}</span>
       </div>

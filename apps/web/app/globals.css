@@ -503,6 +503,10 @@ body {font-size:1rem;}
 .status-line {font-size:.75rem;line-height:1.5;flex-wrap:wrap;}
 .status-line>span:last-child {display:none;}
 .status-line button {font-size:.75rem;}
+.status-line .hands-free-toggle {font-size:.875rem;min-height:32px;padding:3px 8px;border:1px solid var(--line);border-radius:8px;}
+.status-line .hands-free-toggle.on {background:var(--accent-soft);border-color:var(--accent);}
+.status-line .hands-free-toggle svg {width:16px;height:16px;}
+.status-line .compact-voice-status {font-size:.8125rem;}
 .intelligence-rail {padding:0;position:static;max-height:none;overflow:visible;gap:17px;}
 .panel {border-radius:14px;box-shadow:none;border:1px solid var(--line);}
 .panel h3,.card-head {font-size:.8rem;letter-spacing:.015em;text-transform:none;}
